@@ -224,11 +224,21 @@ AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, 
     background: $surface;
 }
 
+#actions_dialog {
+    width: 88;
+}
+
 #actions_title {
     width: 100%;
     height: auto;
     color: $foreground;
     text-style: italic;
+    margin-top: 1;
+}
+
+#actions_access {
+    color: $success;
+    text-style: bold;
     margin-top: 1;
 }
 

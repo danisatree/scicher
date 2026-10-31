@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar
 
+import requests
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -558,25 +559,84 @@ class LoadQueryScreen(ModalScreen[str | None]):
 
 
 SCI_HUB_BASE_URL = "https://sci-hub.st/"
+UNPAYWALL_EMAIL = "oa-lookup@scicher.app"
+
+
+@dataclass
+class OpenAccessInfo:
+    is_free: bool
+    source: str
+    url: str | None = None
+
+
+def check_unpaywall(doi: str) -> OpenAccessInfo | None:
+    """Look up open-access status for a DOI via the free Unpaywall API."""
+    try:
+        resp = requests.get(
+            f"https://api.unpaywall.org/v2/{doi}",
+            params={"email": UNPAYWALL_EMAIL},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:  # noqa: BLE001 - OA status is a nice-to-have, never block on it
+        return None
+    if data.get("is_oa"):
+        best_location = data.get("best_oa_location") or {}
+        return OpenAccessInfo(
+            is_free=True,
+            source=f"Open Access ({data.get('oa_status', 'oa')})",
+            url=best_location.get("url"),
+        )
+    return OpenAccessInfo(is_free=False, source="Closed (paywalled)")
+
+
+def resolve_open_access(pmc: str | None, doi: str | None) -> OpenAccessInfo:
+    """PMC presence is an instant, guaranteed-free signal; fall back to Unpaywall by DOI."""
+    if pmc:
+        return OpenAccessInfo(
+            is_free=True,
+            source="PMC",
+            url=f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{pmc}/",
+        )
+    if doi:
+        oa = check_unpaywall(doi)
+        if oa is not None:
+            return oa
+    return OpenAccessInfo(is_free=False, source="Unknown")
 
 
 class ArticleActionsScreen(ModalScreen[None]):
-    """Modal offering to open the selected article's PubMed page or its Sci-Hub mirror."""
+    """Modal offering to open the selected article's PubMed page, free copy, or Sci-Hub mirror."""
 
-    def __init__(self, pmid: str, title: str | None, url: str | None, doi: str | None) -> None:
+    def __init__(
+        self,
+        pmid: str,
+        title: str | None,
+        url: str | None,
+        doi: str | None,
+        access: OpenAccessInfo,
+    ) -> None:
         super().__init__()
         self._pmid = pmid
         self._title = title
         self._url = url
         self._doi = doi
+        self._access = access
 
     def compose(self) -> ComposeResult:
         with Vertical(id="actions_dialog"):
             yield Label(f"PMID {self._pmid} — open where?", markup=False)
             yield Label(self._title or "(no title)", markup=False, id="actions_title")
             yield Label(f"DOI: {self._doi or '(none on record)'}", markup=False)
+            yield Label(f"Access: {self._access.source}", markup=False, id="actions_access")
             with Horizontal():
                 yield Button("Open PubMed page", variant="primary", id="open_pubmed")
+                yield Button(
+                    "Open free copy",
+                    id="open_free",
+                    disabled=not (self._access.is_free and self._access.url),
+                )
                 yield Button(
                     "Try Sci-Hub (DOI)", id="open_scihub", disabled=not self._doi
                 )
@@ -585,6 +645,8 @@ class ArticleActionsScreen(ModalScreen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "open_pubmed" and self._url:
             webbrowser.open(self._url)
+        elif event.button.id == "open_free" and self._access.url:
+            webbrowser.open(self._access.url)
         elif event.button.id == "open_scihub" and self._doi:
             webbrowser.open(f"{SCI_HUB_BASE_URL}{self._doi}")
         self.dismiss(None)
@@ -910,7 +972,10 @@ class ScicherApp(App):
                 )
                 return
             self._articles[pmid] = article
-        self.push_screen(ArticleActionsScreen(pmid, article.title, article.url, article.doi))
+        access = await self.run_in_thread(lambda: resolve_open_access(article.pmc, article.doi))
+        self.push_screen(
+            ArticleActionsScreen(pmid, article.title, article.url, article.doi, access)
+        )
 
     async def _show_detail(self, pmid: str) -> None:
         detail = self.query_one("#detail_text", Static)
@@ -924,19 +989,29 @@ class ScicherApp(App):
                 return
             self._articles[pmid] = article
 
-        text = (
-            f"PMID: {pmid}\n"
-            f"Title: {article.title}\n"
-            f"Authors: {', '.join(article.authors or [])}\n"
-            f"Journal: {article.journal} ({article.year})\n"
-            f"Volume/Issue/Pages: {article.volume or '?'}/{article.issue or '?'}/"
-            f"{article.pages or '?'}\n"
-            f"DOI: {article.doi or '-'}\n"
-            f"PMC: {article.pmc or '-'}\n"
-            f"URL: {article.url}\n\n"
-            f"Abstract:\n{article.abstract or '(no abstract)'}"
-        )
-        detail.update(text)
+        def render(access_line: str) -> str:
+            return (
+                f"PMID: {pmid}\n"
+                f"Title: {article.title}\n"
+                f"Authors: {', '.join(article.authors or [])}\n"
+                f"Journal: {article.journal} ({article.year})\n"
+                f"Volume/Issue/Pages: {article.volume or '?'}/{article.issue or '?'}/"
+                f"{article.pages or '?'}\n"
+                f"DOI: {article.doi or '-'}\n"
+                f"PMC: {article.pmc or '-'}\n"
+                f"Access: {access_line}\n"
+                f"URL: {article.url}\n\n"
+                f"Abstract:\n{article.abstract or '(no abstract)'}"
+            )
+
+        if article.pmc:
+            detail.update(render("PMC (free)"))
+        elif article.doi:
+            detail.update(render("checking..."))
+            access = await self.run_in_thread(lambda: resolve_open_access(article.pmc, article.doi))
+            detail.update(render(access.source))
+        else:
+            detail.update(render("Unknown"))
 
     def action_log_query(self) -> None:
         status = self.query_one("#status", Label)
