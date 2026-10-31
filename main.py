@@ -2,7 +2,8 @@
 
 import csv
 import os
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -36,6 +37,7 @@ FIELD_CHOICES = [
     ("Text Word", "tw"),
     ("Author", "au"),
     ("Journal", "ta"),
+    ("All Fields (raw/unparsed)", "ALL"),
 ]
 
 MESH_TERMS_PATH = Path(__file__).parent / "data" / "mesh_terms.txt"
@@ -66,6 +68,8 @@ def quote_if_needed(value: str) -> str:
 
 
 def render_term(term: Term) -> str:
+    if term.field == "ALL":
+        return term.value
     return f"{quote_if_needed(term.value)}[{term.field}]"
 
 
@@ -139,6 +143,87 @@ def build_query(groups: list[Group], filters: Filters) -> str:
     clauses = [render_group(g) for g in groups if g.terms]
     clauses.extend(render_filters(filters))
     return " and ".join(clauses)
+
+
+def split_top_level(text: str, sep: str) -> list[str]:
+    """Split on `sep`, ignoring occurrences inside parentheses or quotes."""
+    parts = []
+    depth = 0
+    in_quotes = False
+    start = 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif depth == 0 and text[i : i + len(sep)] == sep:
+                parts.append(text[start:i])
+                i += len(sep)
+                start = i
+                continue
+        i += 1
+    parts.append(text[start:])
+    return [p.strip() for p in parts if p.strip()]
+
+
+TERM_RE = re.compile(r'^(?:"(?P<qval>[^"]+)"|(?P<val>\S+))\[(?P<field>[^\]]+)\]$')
+YEAR_RANGE_RE = re.compile(r'^\(\s*"(\d{4})"\[dp\]\s*:\s*"(\d{4})"\[dp\]\s*\)$')
+
+
+def parse_term(text: str) -> Term | None:
+    match = TERM_RE.match(text.strip())
+    if not match:
+        return None
+    value = match.group("qval") if match.group("qval") is not None else match.group("val")
+    return Term(field=match.group("field"), value=value)
+
+
+def parse_query(query: str) -> tuple[list[Group], Filters]:
+    """Parse a previously-rendered PubMed query string back into groups and filters.
+
+    Best-effort: clauses this app itself generated (via build_query) always round-trip
+    exactly. Anything unrecognized becomes a single fallback term so no text is lost.
+    """
+    groups: list[Group] = []
+    filters = Filters()
+    pub_types: set[str] = set()
+
+    for clause in split_top_level(query, " and "):
+        year_match = YEAR_RANGE_RE.match(clause)
+        if year_match:
+            filters = replace(filters, year_from=year_match.group(1), year_to=year_match.group(2))
+            continue
+        if clause == '"humans"[mesh]':
+            filters = replace(filters, species="human")
+            continue
+        if clause == '"animals"[mesh]':
+            filters = replace(filters, species="animal")
+            continue
+        if clause == '"free full text"[filter]':
+            filters = replace(filters, free_full_text=True)
+            continue
+
+        inner = clause[1:-1] if clause.startswith("(") and clause.endswith(")") else clause
+        parts = [p.strip() for p in inner.split(" OR ")]
+        maybe_terms = [parse_term(p) for p in parts]
+        terms = [t for t in maybe_terms if t is not None]
+
+        if terms and len(terms) == len(maybe_terms):
+            if all(term.field == "pt" for term in terms):
+                pub_types.update(term.value for term in terms)
+            else:
+                groups.append(Group(terms=terms))
+        else:
+            groups.append(Group(terms=[Term(field="ALL", value=clause)]))
+
+    if pub_types:
+        filters = replace(filters, publication_types=frozenset(pub_types))
+    return groups, filters
 
 
 def describe_filters(filters: Filters) -> str:
@@ -495,7 +580,6 @@ class ScicherApp(App):
         super().__init__()
         self.groups: list[Group] = [Group()]
         self.filters = Filters()
-        self.loaded_query: str | None = None
         self._fetcher = None
         self._last_pmids: list[str] = []
         self._last_query: str | None = None
@@ -582,27 +666,21 @@ class ScicherApp(App):
             f"Query: {self.current_query() or '(empty)'}"
         )
         query_section = self.query_one("#query_section")
-        if self.loaded_query is not None:
-            query_section.border_subtitle = "LOADED FROM LOG (o to edit) · edit terms to clear"
-        elif self.filters.is_empty():
+        if self.filters.is_empty():
             query_section.border_subtitle = "PUBMED SYNTAX"
         else:
             query_section.border_subtitle = f"FILTERS ACTIVE (f to edit) · {describe_filters(self.filters)}"
 
     def current_query(self) -> str:
-        if self.loaded_query is not None:
-            return self.loaded_query
         return build_query(self.groups, self.filters)
 
     def action_new_group(self) -> None:
-        self.loaded_query = None
         self.groups.append(Group())
         self.refresh_groups_list()
 
     def action_add_term(self) -> None:
         def handle_result(term: Term | None) -> None:
             if term is not None:
-                self.loaded_query = None
                 self.groups[-1].terms.append(term)
                 self.refresh_groups_list()
 
@@ -615,7 +693,6 @@ class ScicherApp(App):
             return
         gi_str, ti_str = item.name.split(":")
         gi, ti = int(gi_str), int(ti_str)
-        self.loaded_query = None
         if ti >= 0:
             del self.groups[gi].terms[ti]
         if not self.groups[gi].terms and len(self.groups) > 1:
@@ -638,7 +715,6 @@ class ScicherApp(App):
 
         def handle_result(updated: Term | None) -> None:
             if updated is not None:
-                self.loaded_query = None
                 self.groups[gi].terms[ti] = updated
                 self.refresh_groups_list()
 
@@ -647,7 +723,6 @@ class ScicherApp(App):
     def action_edit_filters(self) -> None:
         def handle_result(updated: Filters | None) -> None:
             if updated is not None:
-                self.loaded_query = None
                 self.filters = updated
                 self.refresh_groups_list()
 
@@ -657,7 +732,9 @@ class ScicherApp(App):
         def handle_result(query: str | None) -> None:
             if not query:
                 return
-            self.loaded_query = query
+            groups, filters = parse_query(query)
+            self.groups = groups or [Group()]
+            self.filters = filters
             self.refresh_groups_list()
             self.query_one("#status", Label).update(f"Loaded saved query: {query}")
 
