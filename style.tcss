@@ -1,5 +1,10 @@
 /* Scicher — cyberpunk HUD stylesheet for the main app and its modal dialogs. */
 
+/* Keep scrolling (keyboard/wheel) working everywhere, just hide the visible bar. */
+* {
+    scrollbar-visibility: hidden;
+}
+
 Screen {
     background: $background;
     scrollbar-color: $primary;
@@ -33,6 +38,30 @@ FooterKey.-command-palette {
 
 FooterKey.-command-palette .footer-key--key {
     color: $secondary;
+}
+
+/* Compact command palette (ctrl+p), anchored near the top so a long result list
+   (e.g. the theme picker) grows downward and scrolls instead of overflowing past
+   the bottom of the screen. */
+CommandPalette {
+    align: center top;
+    background: $background 70%;
+}
+
+CommandPalette > Vertical {
+    margin-top: 2;
+    width: 90;
+    height: auto;
+    border: thick $secondary;
+    background: $surface;
+}
+
+CommandPalette #--input {
+    border: hkey $secondary 50%;
+}
+
+CommandList {
+    max-height: 60vh;
 }
 
 #main_area {
@@ -100,25 +129,23 @@ FooterKey.-command-palette .footer-key--key {
 }
 
 Button {
-    border: round $primary;
+    border: tall $primary;
     background: $surface;
     color: $primary;
     text-style: bold;
 }
 
-Button:hover {
+Button:hover, Button.-primary:hover {
+    border: tall $accent;
     background: $primary 25%;
     color: $foreground;
 }
 
-Button.-primary {
-    border: round $accent;
-    background: $accent 25%;
-    color: $foreground;
-}
-
-Button.-primary:hover {
-    background: $accent 45%;
+Button:focus, Button.-primary:focus {
+    border: tall $accent;
+    background: $primary 85%;
+    color: $background;
+    text-style: bold;
 }
 
 #results_table {
@@ -157,18 +184,61 @@ DataTable > .datatable--cursor {
     margin-top: 1;
 }
 
-/* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen) */
+#search_progress {
+    display: none;
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
 
-AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen {
+#search_progress Bar {
+    width: 1fr;
+}
+
+#search_progress Bar > .bar--bar {
+    color: $accent;
+    background: $surface;
+}
+
+#search_progress Bar > .bar--complete {
+    color: $secondary;
+    background: $surface;
+}
+
+#search_progress PercentageStatus {
+    color: $foreground;
+    text-style: bold;
+}
+
+/* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen) */
+
+AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen {
     align: center middle;
 }
 
-#dialog, #export_dialog, #log_dialog {
+#dialog, #export_dialog, #log_dialog, #actions_dialog {
     width: 70;
     height: auto;
     padding: 1 2;
     border: thick $primary;
     background: $surface;
+}
+
+#actions_title {
+    width: 100%;
+    height: auto;
+    color: $foreground;
+    text-style: italic;
+    margin-top: 1;
+}
+
+#actions_dialog Horizontal {
+    height: auto;
+    margin-top: 1;
+}
+
+#actions_dialog Button {
+    margin-right: 1;
 }
 
 #dialog Select, #dialog Input, #dialog Horizontal,
