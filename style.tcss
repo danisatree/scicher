@@ -1,0 +1,236 @@
+/* Scicher — cyberpunk HUD stylesheet for the main app and its modal dialogs. */
+
+Screen {
+    background: $background;
+    scrollbar-color: $primary;
+    scrollbar-background: $surface;
+}
+
+Header {
+    background: $background;
+    color: $primary;
+    text-style: bold;
+}
+
+Footer {
+    background: $background;
+}
+
+FooterKey {
+    background: $background;
+    color: $foreground;
+}
+
+FooterKey .footer-key--key {
+    color: $primary;
+    text-style: bold;
+}
+
+FooterKey.-command-palette {
+    background: $background;
+    color: $secondary;
+}
+
+FooterKey.-command-palette .footer-key--key {
+    color: $secondary;
+}
+
+#main_area {
+    height: 1fr;
+    padding: 0 1;
+}
+
+#results_section {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+#bottom_row {
+    height: 1fr;
+}
+
+#left_col, #detail_section {
+    width: 1fr;
+    height: 1fr;
+}
+
+#left_col {
+    margin-right: 1;
+}
+
+#query_panel, #query_section, #results_section, #detail_section {
+    height: 1fr;
+    border: round $primary;
+    background: $panel;
+    padding: 0 1;
+    border-title-color: $primary;
+    border-title-style: bold;
+    border-title-align: left;
+    border-subtitle-color: $secondary;
+    border-subtitle-align: right;
+}
+
+#query_panel {
+    margin-bottom: 1;
+}
+
+#query_section, #detail_section {
+    border: round $secondary;
+    border-title-color: $secondary;
+    border-subtitle-color: $primary;
+}
+
+#groups_list {
+    height: 1fr;
+    background: $surface;
+}
+
+#query_preview_scroll {
+    height: 1fr;
+    background: $surface;
+    padding: 0 0 0 1;
+}
+
+#query_preview {
+    color: $foreground;
+}
+
+#groups_list:focus, #query_preview_scroll:focus, #detail_scroll:focus, #results_table:focus {
+    background-tint: $accent 10%;
+}
+
+Button {
+    border: round $primary;
+    background: $surface;
+    color: $primary;
+    text-style: bold;
+}
+
+Button:hover {
+    background: $primary 25%;
+    color: $foreground;
+}
+
+Button.-primary {
+    border: round $accent;
+    background: $accent 25%;
+    color: $foreground;
+}
+
+Button.-primary:hover {
+    background: $accent 45%;
+}
+
+#results_table {
+    height: 1fr;
+    background: $surface;
+}
+
+DataTable > .datatable--header {
+    background: $panel;
+    color: $primary;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent 35%;
+    color: $foreground;
+}
+
+#detail_scroll {
+    height: 1fr;
+    background: $surface;
+    padding: 0 0 0 1;
+}
+
+#detail_text {
+    color: $foreground;
+}
+
+#status {
+    width: 100%;
+    height: auto;
+    color: $primary;
+    background: $panel;
+    border: round $primary 30%;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+/* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen) */
+
+AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen {
+    align: center middle;
+}
+
+#dialog, #export_dialog, #log_dialog {
+    width: 70;
+    height: auto;
+    padding: 1 2;
+    border: thick $primary;
+    background: $surface;
+}
+
+#dialog Select, #dialog Input, #dialog Horizontal,
+#export_dialog Input, #export_dialog Horizontal,
+#log_dialog Input, #log_dialog Horizontal {
+    margin-top: 1;
+}
+
+#filters_dialog {
+    width: 74;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: thick $primary;
+    background: $surface;
+}
+
+#filters_dialog Horizontal, #filters_dialog SelectionList,
+#filters_dialog Select, #filters_dialog Checkbox {
+    margin-top: 1;
+}
+
+#year_row Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#year_row Input:last-child {
+    margin-right: 0;
+}
+
+#pub_types {
+    height: 10;
+    border: round $primary 30%;
+}
+
+#load_dialog {
+    width: 100;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: thick $primary;
+    background: $surface;
+}
+
+#load_path_row {
+    height: auto;
+    margin-top: 1;
+}
+
+#load_path_row Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#load_dialog > Horizontal:last-child {
+    margin-top: 1;
+}
+
+#log_entries {
+    height: 14;
+    margin-top: 1;
+    background: $surface;
+    border: round $primary 30%;
+}
