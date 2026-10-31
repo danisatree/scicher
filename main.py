@@ -1,8 +1,10 @@
 """Scicher: interactive PubMed query builder and search TUI."""
 
+import asyncio
 import csv
 import os
 import re
+import webbrowser
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
@@ -23,6 +25,7 @@ from textual.widgets import (
     Label,
     ListItem,
     ListView,
+    ProgressBar,
     Select,
     SelectionList,
     Static,
@@ -292,6 +295,7 @@ def write_results_csv(path: str, rows: list[dict[str, str]]) -> None:
 
 
 QUERY_LOG_FIELDS = ["timestamp", "query", "result_count"]
+DEFAULT_QUERY_LOG_PATH = "scicher_query_log.csv"
 
 
 def append_query_log(path: str, query: str, result_count: str) -> None:
@@ -553,24 +557,58 @@ class LoadQueryScreen(ModalScreen[str | None]):
         self.dismiss(event.item.name if event.item.name else None)
 
 
+SCI_HUB_BASE_URL = "https://sci-hub.st/"
+
+
+class ArticleActionsScreen(ModalScreen[None]):
+    """Modal offering to open the selected article's PubMed page or its Sci-Hub mirror."""
+
+    def __init__(self, pmid: str, title: str | None, url: str | None, doi: str | None) -> None:
+        super().__init__()
+        self._pmid = pmid
+        self._title = title
+        self._url = url
+        self._doi = doi
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="actions_dialog"):
+            yield Label(f"PMID {self._pmid} — open where?", markup=False)
+            yield Label(self._title or "(no title)", markup=False, id="actions_title")
+            yield Label(f"DOI: {self._doi or '(none on record)'}", markup=False)
+            with Horizontal():
+                yield Button("Open PubMed page", variant="primary", id="open_pubmed")
+                yield Button(
+                    "Try Sci-Hub (DOI)", id="open_scihub", disabled=not self._doi
+                )
+                yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "open_pubmed" and self._url:
+            webbrowser.open(self._url)
+        elif event.button.id == "open_scihub" and self._doi:
+            webbrowser.open(f"{SCI_HUB_BASE_URL}{self._doi}")
+        self.dismiss(None)
+
+
 class ScicherApp(App):
     """TUI for building PubMed advanced-search queries and browsing results."""
 
     TITLE = ">_ SCICHER"
-    SUB_TITLE = "PUBMED SEARCH CONSOLE // BUILD · SEARCH · EXPORT"
+    SUB_TITLE = "SEARCH CONSOLE"
     CSS_PATH = "style.tcss"
     BINDINGS: ClassVar = [
-        ("1", "focus_query_terms", "§1 Terms"),
-        ("2", "focus_query_preview", "§2 Query"),
-        ("3", "focus_results", "§3 Results"),
-        ("4", "focus_detail", "§4 Detail"),
+        ("1", "focus_query_terms", "Terms"),
+        ("2", "focus_query_preview", "Query"),
+        ("3", "focus_results", "Results"),
+        ("4", "focus_detail", "Detail"),
+        ("y", "sort_by_year", "Sort by year"),
         ("a", "add_term", "Add term"),
         ("n", "new_group", "New group (AND)"),
-        ("m", "edit_selected", "Edit selected term"),
-        ("d", "delete_selected", "Delete selected term"),
+        ("m", "edit_selected", "Edit term"),
+        ("d", "delete_selected", "Delete term"),
         ("f", "edit_filters", "Filters"),
-        ("s", "run_search", "Search PubMed"),
-        ("e", "export_csv", "Export CSV"),
+        ("s", "run_search", "Search"),
+        ("e", "export_csv", "Export"),
         ("l", "log_query", "Log query"),
         ("o", "load_query", "Load query"),
         ("q", "quit", "Quit"),
@@ -584,6 +622,8 @@ class ScicherApp(App):
         self._last_pmids: list[str] = []
         self._last_query: str | None = None
         self._articles: dict[str, Any] = {}
+        self._sort_column: str | None = None
+        self._sort_reverse = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -605,6 +645,7 @@ class ScicherApp(App):
                             markup=False,
                         )
             yield Label("", id="status", markup=False)
+            yield ProgressBar(id="search_progress", show_eta=False)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -612,22 +653,22 @@ class ScicherApp(App):
         self.theme = "cyberlab"
 
         query_panel = self.query_one("#query_panel")
-        query_panel.border_title = "§1 · QUERY TERMS"
+        query_panel.border_title = "1. QUERY TERMS"
         query_panel.border_subtitle = "AND / OR"
 
         query_section = self.query_one("#query_section")
-        query_section.border_title = "§2 · COMPILED QUERY"
-        query_section.border_subtitle = "PUBMED SYNTAX"
+        query_section.border_title = "2. COMPILED QUERY"
+        query_section.border_subtitle = "SEARCH STRATEGY"
 
         results_section = self.query_one("#results_section")
-        results_section.border_title = "§3 · FOUND ARTICLES"
+        results_section.border_title = "3. FOUND ARTICLES"
 
         detail_section = self.query_one("#detail_section")
-        detail_section.border_title = "§4 · ARTICLE METADATA"
+        detail_section.border_title = "4. ARTICLE METADATA"
 
         self.refresh_groups_list()
         table = self.query_one("#results_table", DataTable)
-        table.add_columns("PMID", "Year", "Journal", "Title")
+        table.add_columns(("PMID", "pmid"), ("Year", "year"), ("Journal", "journal"), ("Title", "title"))
         table.cursor_type = "row"
         table.zebra_stripes = True
 
@@ -649,6 +690,37 @@ class ScicherApp(App):
 
     def action_focus_detail(self) -> None:
         self.query_one("#detail_scroll", VerticalScroll).focus()
+
+    NUMERIC_SORT_COLUMNS: ClassVar = {"pmid", "year"}
+
+    def sort_results_by(self, column_key: str) -> None:
+        table = self.query_one("#results_table", DataTable)
+        if not table.row_count:
+            return
+        if self._sort_column == column_key:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_column = column_key
+            self._sort_reverse = False
+
+        numeric = column_key in self.NUMERIC_SORT_COLUMNS
+
+        def key_fn(value: object) -> Any:
+            text = str(value)
+            if numeric:
+                return int(text) if text.isdigit() else -1
+            return text.lower()
+
+        table.sort(column_key, key=key_fn, reverse=self._sort_reverse)
+        direction = "descending" if self._sort_reverse else "ascending"
+        self.query_one("#status", Label).update(f"Sorted by {column_key} ({direction}).")
+
+    def action_sort_by_year(self) -> None:
+        self.sort_results_by("year")
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        if event.column_key.value:
+            self.sort_results_by(event.column_key.value)
 
     def refresh_groups_list(self) -> None:
         list_view = self.query_one("#groups_list", ListView)
@@ -738,7 +810,7 @@ class ScicherApp(App):
             self.refresh_groups_list()
             self.query_one("#status", Label).update(f"Loaded saved query: {query}")
 
-        self.push_screen(LoadQueryScreen("scicher_query_log.csv"), handle_result)
+        self.push_screen(LoadQueryScreen(DEFAULT_QUERY_LOG_PATH), handle_result)
 
     def action_run_search(self) -> None:
         query = self.current_query()
@@ -752,63 +824,105 @@ class ScicherApp(App):
     async def _do_search(self, query: str) -> None:
         status = self.query_one("#status", Label)
         table = self.query_one("#results_table", DataTable)
+        progress = self.query_one("#search_progress", ProgressBar)
         table.clear()
         self.query_one("#detail_text", Static).update(
             "Run a search and highlight a row to see its metadata here."
         )
+        progress.display = True
+        progress.update(total=None, progress=0)
         try:
             fetcher = self.get_fetcher()
             pmids = await self.run_in_thread(lambda: fetcher.pmids_for_query(query, retmax=50))
         except Exception as exc:  # noqa: BLE001 - surface any NCBI/network error to the user
             status.update(f"Search failed: {exc}")
+            progress.display = False
             return
 
         self._last_pmids = pmids
         self._last_query = query
         self._articles = {}
+        try:
+            append_query_log(DEFAULT_QUERY_LOG_PATH, query, str(len(pmids)))
+        except OSError:
+            pass  # non-fatal: searching should still work even if the log can't be written
         status.update(f"Found {len(pmids)} result(s), loading details...")
         if not pmids:
+            progress.display = False
             return
 
+        progress.update(total=len(pmids), progress=0)
         for pmid in pmids:
-            try:
-                article = await self.run_in_thread(lambda p=pmid: fetcher.article_by_pmid(p))
+            article = await self._fetch_article_with_retries(fetcher, pmid)
+            if article is not None:
                 self._articles[pmid] = article
                 title = article.title or "(no title)"
                 year = article.year or "?"
                 journal = article.journal or ""
-            except Exception:  # noqa: BLE001 - keep listing even if one article fails to fetch
+            else:
                 title = "(failed to fetch details)"
                 year = "?"
                 journal = ""
             table.add_row(pmid, year, journal, title, key=pmid)
+            progress.advance(1)
 
+        progress.display = False
         status.update(
             f"Found {len(pmids)} result(s) for: {query} — details loaded, ready to export."
         )
 
     async def run_in_thread(self, fn):
-        import asyncio
-
         return await asyncio.to_thread(fn)
+
+    async def _fetch_article_with_retries(self, fetcher, pmid: str, attempts: int = 3) -> Any:
+        """PubMed's eutils occasionally rejects a valid PMID under rapid sequential
+        requests (no API key means a strict 3 req/sec limit); the same PMID almost
+        always succeeds moments later, so a couple of short retries fix most of these.
+        """
+        for attempt in range(attempts):
+            try:
+                return await self.run_in_thread(lambda p=pmid: fetcher.article_by_pmid(p))
+            except Exception:  # noqa: BLE001 - retry, then let the caller show a fallback
+                if attempt < attempts - 1:
+                    await asyncio.sleep(0.6)
+        return None
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.row_key is None or event.row_key.value is None:
             return
         self.run_worker(self._show_detail(str(event.row_key.value)), group="detail", exclusive=True)
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.row_key is None or event.row_key.value is None:
+            return
+        self.run_worker(
+            self._open_article_actions(str(event.row_key.value)), group="detail", exclusive=True
+        )
+
+    async def _open_article_actions(self, pmid: str) -> None:
+        article = self._articles.get(pmid)
+        if article is None:
+            fetcher = self.get_fetcher()
+            article = await self._fetch_article_with_retries(fetcher, pmid)
+            if article is None:
+                self.query_one("#status", Label).update(
+                    f"Could not load PMID {pmid} to open actions."
+                )
+                return
+            self._articles[pmid] = article
+        self.push_screen(ArticleActionsScreen(pmid, article.title, article.url, article.doi))
+
     async def _show_detail(self, pmid: str) -> None:
         detail = self.query_one("#detail_text", Static)
         article = self._articles.get(pmid)
         if article is None:
             detail.update(f"Loading metadata for PMID {pmid}...")
-            try:
-                fetcher = self.get_fetcher()
-                article = await self.run_in_thread(lambda: fetcher.article_by_pmid(pmid))
-                self._articles[pmid] = article
-            except Exception as exc:  # noqa: BLE001
-                detail.update(f"Failed to load PMID {pmid}: {exc}")
+            fetcher = self.get_fetcher()
+            article = await self._fetch_article_with_retries(fetcher, pmid)
+            if article is None:
+                detail.update(f"Failed to load PMID {pmid} after several attempts.")
                 return
+            self._articles[pmid] = article
 
         text = (
             f"PMID: {pmid}\n"
@@ -831,7 +945,7 @@ class ScicherApp(App):
             status.update("Add at least one term before logging a query.")
             return
 
-        default_path = "scicher_query_log.csv"
+        default_path = DEFAULT_QUERY_LOG_PATH
         result_count = str(len(self._last_pmids)) if query == self._last_query else ""
 
         def handle_result(path: str | None) -> None:
