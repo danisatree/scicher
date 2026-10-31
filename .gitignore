@@ -12,3 +12,6 @@ wheels/
 # Scicher runtime output (search exports, query log)
 scicher_results_*.csv
 scicher_query_log.csv
+
+# macOS
+.DS_Store
