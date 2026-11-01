@@ -225,9 +225,19 @@ SettingsScreen {
 
 /* Single source of truth for every modal dialog's chrome (border/background/padding),
    including the built-in command palette, so they all read as one visual family. */
-#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog,
+#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog {
+    height: auto;
+    padding: 1 2;
+    border: thick $primary;
+    background: $surface;
+}
+
+/* Textual's built-in CommandPalette CSS sets this container to visibility:hidden
+   (only specific children override it back to visible); without re-overriding it
+   here, our border/background below would be set but silently never drawn. */
 CommandPalette > Vertical {
     height: auto;
+    visibility: visible;
     padding: 1 2;
     border: thick $primary;
     background: $surface;
