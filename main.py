@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 import requests
 from textual.app import App, ComposeResult, SystemCommand
@@ -497,7 +497,20 @@ def read_query_log(path: str) -> list[dict[str, str]]:
     return rows
 
 
-class AddTermScreen(ModalScreen[Term | None]):
+ResultT = TypeVar("ResultT")
+
+
+class EscDismissScreen(ModalScreen[ResultT]):
+    """A ModalScreen that can also be closed with Escape, dismissing with None
+    the same way its Cancel button does."""
+
+    BINDINGS: ClassVar = [("escape", "dismiss_none", "Cancel")]
+
+    def action_dismiss_none(self) -> None:
+        self.dismiss(None)
+
+
+class AddTermScreen(EscDismissScreen[Term | None]):
     """Modal dialog for adding a single search term."""
 
     def __init__(self, term: Term | None = None) -> None:
@@ -553,7 +566,7 @@ class AddTermScreen(ModalScreen[Term | None]):
         self.dismiss(Term(field=str(field_), value=value) if value else None)
 
 
-class ExportCsvScreen(ModalScreen[str | None]):
+class ExportCsvScreen(EscDismissScreen[str | None]):
     """Modal dialog for choosing the CSV file path to export results to."""
 
     def __init__(self, default_path: str) -> None:
@@ -583,7 +596,7 @@ class ExportCsvScreen(ModalScreen[str | None]):
         self.dismiss(value or None)
 
 
-class QueryLogScreen(ModalScreen[str | None]):
+class QueryLogScreen(EscDismissScreen[str | None]):
     """Modal dialog for choosing the CSV log file to append the current query to."""
 
     def __init__(self, default_path: str) -> None:
@@ -613,7 +626,7 @@ class QueryLogScreen(ModalScreen[str | None]):
         self.dismiss(value or None)
 
 
-class FiltersScreen(ModalScreen[Filters | None]):
+class FiltersScreen(EscDismissScreen[Filters | None]):
     """Modal dialog for editing year/publication-type/species/full-text filters."""
 
     def __init__(self, filters: Filters) -> None:
@@ -644,7 +657,7 @@ class FiltersScreen(ModalScreen[Filters | None]):
                     yield Label("Species (PubMed/MeSH only)", classes="filter_hint")
                     yield Select(SPECIES_CHOICES, value=self._filters.species, id="species_select")
                     yield Checkbox(
-                        "Free full text only (PubMed only; arXiv is always free)",
+                        "Free full text only (PubMed only)",
                         value=self._filters.free_full_text,
                         id="free_full_text",
                     )
@@ -696,7 +709,7 @@ class FiltersScreen(ModalScreen[Filters | None]):
         )
 
 
-class LoadQueryScreen(ModalScreen[str | None]):
+class LoadQueryScreen(EscDismissScreen[str | None]):
     """Modal dialog for picking a previously logged query from a CSV file."""
 
     def __init__(self, default_path: str) -> None:
@@ -864,7 +877,7 @@ def resolve_access_for(key: str, article: Any) -> OpenAccessInfo:
     return resolve_open_access(article.pmc, article.doi)
 
 
-class ArticleActionsScreen(ModalScreen[None]):
+class ArticleActionsScreen(EscDismissScreen[None]):
     """Modal offering to open the selected article's PubMed page, free copy, or Sci-Hub mirror."""
 
     def __init__(
@@ -912,7 +925,7 @@ class ArticleActionsScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
-class SettingsScreen(ModalScreen[Settings | None]):
+class SettingsScreen(EscDismissScreen[Settings | None]):
     """Modal for configuring the NCBI API key and other service settings (saved locally)."""
 
     def __init__(self, settings: Settings) -> None:
@@ -1015,12 +1028,14 @@ class ScicherApp(App):
                                 "PubMed",
                                 value=True,
                                 id="source_pubmed",
+                                compact=True,
                                 tooltip="Search PubMed for this query. Uncheck to skip it.",
                             )
                             yield Checkbox(
                                 "arXiv",
                                 value=True,
                                 id="source_arxiv",
+                                compact=True,
                                 tooltip=(
                                     "Search arXiv using the compatible parts of this query "
                                     "(MeSH/Journal terms have no arXiv equivalent and are "
