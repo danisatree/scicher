@@ -464,6 +464,30 @@ def article_to_row(pmid: str, article: Any, source: str = "PubMed") -> dict[str,
     }
 
 
+def format_citation(article: Any) -> str:
+    """Plain-text citation (Vancouver-ish: Authors. Title. Journal (Year). vol/issue/pages. doi:X)."""
+    authors = article.authors or []
+    if len(authors) > 3:
+        author_str = f"{authors[0]} et al."
+    elif authors:
+        author_str = ", ".join(authors)
+    else:
+        author_str = "(no authors listed)"
+    title = article.title or "(no title)"
+    journal_year = article.journal or ""
+    if article.year:
+        journal_year = f"{journal_year} ({article.year})" if journal_year else f"({article.year})"
+    vip = "/".join(str(v) for v in (article.volume, article.issue, article.pages) if v)
+    parts = [f"{author_str}.", f"{title}."]
+    if journal_year:
+        parts.append(f"{journal_year}.")
+    if vip:
+        parts.append(f"{vip}.")
+    if article.doi:
+        parts.append(f"doi:{article.doi}")
+    return " ".join(parts)
+
+
 def write_results_csv(path: str, rows: list[dict[str, str]]) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=CSV_FIELDS)
@@ -879,31 +903,30 @@ def resolve_access_for(key: str, article: Any) -> OpenAccessInfo:
     return resolve_open_access(article.pmc, article.doi)
 
 
-class ArticleActionsScreen(EscDismissScreen[None]):
-    """Modal offering to open the selected article's PubMed page, free copy, or Sci-Hub mirror."""
+class ArticleActionsScreen(EscDismissScreen[str | None]):
+    """Modal offering actions for the selected article: open links, copy details, or remove it
+    from the results table. Dismisses with "remove" if the caller should drop the article,
+    otherwise None."""
 
     def __init__(
         self,
-        pmid: str,
-        title: str | None,
-        url: str | None,
-        doi: str | None,
+        display_id: str,
+        article: Any,
         access: OpenAccessInfo,
         id_label: str = "PMID",
     ) -> None:
         super().__init__()
-        self._pmid = pmid
-        self._title = title
-        self._url = url
-        self._doi = doi
+        self._display_id = display_id
+        self._article = article
         self._access = access
         self._id_label = id_label
 
     def compose(self) -> ComposeResult:
+        article = self._article
         with Vertical(id="actions_dialog"):
-            yield Label(f"{self._id_label} {self._pmid} — open where?", markup=False)
-            yield Label(self._title or "(no title)", markup=False, id="actions_title")
-            yield Label(f"DOI: {self._doi or '(none on record)'}", markup=False)
+            yield Label(f"{self._id_label} {self._display_id} — open where?", markup=False)
+            yield Label(article.title or "(no title)", markup=False, id="actions_title")
+            yield Label(f"DOI: {article.doi or '(none on record)'}", markup=False)
             yield Label(f"Access: {self._access.source}", markup=False, id="actions_access")
             with Horizontal():
                 yield Button("Open PubMed page", variant="primary", id="open_pubmed")
@@ -912,18 +935,38 @@ class ArticleActionsScreen(EscDismissScreen[None]):
                     id="open_free",
                     disabled=not (self._access.is_free and self._access.url),
                 )
-                yield Button(
-                    "Try Sci-Hub (DOI)", id="open_scihub", disabled=not self._doi
-                )
+                yield Button("Try Sci-Hub (DOI)", id="open_scihub", disabled=not article.doi)
+            with Horizontal():
+                yield Button("Copy citation", id="copy_citation")
+                yield Button("Copy DOI", id="copy_doi", disabled=not article.doi)
+                yield Button("Copy URL", id="copy_url", disabled=not article.url)
+                yield Button("Remove from results", id="remove")
                 yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "open_pubmed" and self._url:
-            webbrowser.open(self._url)
-        elif event.button.id == "open_free" and self._access.url:
+        article = self._article
+        button_id = event.button.id
+        if button_id == "open_pubmed" and article.url:
+            webbrowser.open(article.url)
+        elif button_id == "open_free" and self._access.url:
             webbrowser.open(self._access.url)
-        elif event.button.id == "open_scihub" and self._doi:
-            webbrowser.open(f"{SCI_HUB_BASE_URL}{self._doi}")
+        elif button_id == "open_scihub" and article.doi:
+            webbrowser.open(f"{SCI_HUB_BASE_URL}{article.doi}")
+        elif button_id == "copy_citation":
+            self.app.copy_to_clipboard(format_citation(article))
+            self.notify("Citation copied to clipboard.")
+            return
+        elif button_id == "copy_doi" and article.doi:
+            self.app.copy_to_clipboard(article.doi)
+            self.notify("DOI copied to clipboard.")
+            return
+        elif button_id == "copy_url" and article.url:
+            self.app.copy_to_clipboard(article.url)
+            self.notify("URL copied to clipboard.")
+            return
+        elif button_id == "remove":
+            self.dismiss("remove")
+            return
         self.dismiss(None)
 
 
@@ -1446,11 +1489,15 @@ class ScicherApp(App):
         access = await self.run_in_thread(lambda: resolve_access_for(key, article))
         display_id = key.split(":", 1)[1]
         id_label = "arXiv ID" if key.startswith("arxiv:") else "PMID"
-        self.push_screen(
-            ArticleActionsScreen(
-                display_id, article.title, article.url, article.doi, access, id_label
-            )
+        result = await self.push_screen_wait(
+            ArticleActionsScreen(display_id, article, access, id_label)
         )
+        if result == "remove":
+            self.query_one("#results_table", DataTable).remove_row(key)
+            self._articles.pop(key, None)
+            if key in self._last_result_keys:
+                self._last_result_keys.remove(key)
+            self.query_one("#status", Label).update(f"Removed {id_label} {display_id} from results.")
 
     async def _show_detail(self, key: str) -> None:
         detail = self.query_one("#detail_text", Static)

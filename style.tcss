@@ -239,7 +239,7 @@ CommandPalette #--input {
 }
 
 #actions_dialog {
-    width: 88;
+    width: 116;
 }
 
 #settings_dialog {
