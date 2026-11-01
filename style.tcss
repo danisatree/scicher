@@ -122,11 +122,11 @@ CommandPalette > Vertical {
     color: $foreground;
 }
 
-/* Show which section is active via a thicker, differently-colored border on the
-   panel itself rather than tinting its background. */
+/* Show which section is active via a differently-colored border on the panel
+   itself (same thickness as inactive panels) rather than tinting its background. */
 #query_panel:focus-within, #query_section:focus-within,
 #results_section:focus-within, #detail_section:focus-within {
-    border: thick $accent;
+    border: round $accent;
 }
 
 Button {
