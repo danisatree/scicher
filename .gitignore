@@ -13,5 +13,8 @@ wheels/
 scicher_results_*.csv
 scicher_query_log.csv
 
+# Scicher local settings (API keys — never commit)
+scicher_settings.json
+
 # macOS
 .DS_Store

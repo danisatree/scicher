@@ -212,11 +212,12 @@ DataTable > .datatable--cursor {
 
 /* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen) */
 
-AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen {
+AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen,
+SettingsScreen {
     align: center middle;
 }
 
-#dialog, #export_dialog, #log_dialog, #actions_dialog {
+#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog {
     width: 70;
     height: auto;
     padding: 1 2;
@@ -226,6 +227,14 @@ AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, 
 
 #actions_dialog {
     width: 88;
+}
+
+#settings_dialog {
+    width: 80;
+}
+
+#settings_dialog Input {
+    margin-bottom: 1;
 }
 
 #actions_title {

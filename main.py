@@ -1,11 +1,13 @@
 """Scicher: interactive PubMed query builder and search TUI."""
 
 import asyncio
+import contextlib
 import csv
+import json
 import os
 import re
 import webbrowser
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -561,6 +563,56 @@ class LoadQueryScreen(ModalScreen[str | None]):
 SCI_HUB_BASE_URL = "https://sci-hub.st/"
 UNPAYWALL_EMAIL = "oa-lookup@scicher.app"
 
+SETTINGS_PATH = Path(__file__).parent / "scicher_settings.json"
+
+
+@dataclass
+class Settings:
+    """User-configurable API credentials, stored locally and never committed."""
+
+    ncbi_api_key: str = ""
+    unpaywall_email: str = ""
+    scihub_mirror: str = ""
+
+
+def load_settings() -> Settings:
+    if not SETTINGS_PATH.exists():
+        return Settings()
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return Settings()
+    return Settings(
+        ncbi_api_key=data.get("ncbi_api_key", ""),
+        unpaywall_email=data.get("unpaywall_email", ""),
+        scihub_mirror=data.get("scihub_mirror", ""),
+    )
+
+
+def save_settings(settings: Settings) -> None:
+    SETTINGS_PATH.write_text(json.dumps(asdict(settings), indent=2), encoding="utf-8")
+    with contextlib.suppress(OSError):
+        os.chmod(SETTINGS_PATH, 0o600)  # owner read/write only; API key lives in this file
+
+
+def apply_settings(settings: Settings) -> None:
+    """Push settings into the running process: env var for metapub, module globals here."""
+    global UNPAYWALL_EMAIL, SCI_HUB_BASE_URL
+
+    if settings.ncbi_api_key:
+        os.environ["NCBI_API_KEY"] = settings.ncbi_api_key
+        try:
+            import metapub.eutils_common as _eutils_common
+
+            _eutils_common.API_KEY = settings.ncbi_api_key
+        except ImportError:
+            pass
+
+    if settings.unpaywall_email:
+        UNPAYWALL_EMAIL = settings.unpaywall_email
+    if settings.scihub_mirror:
+        SCI_HUB_BASE_URL = settings.scihub_mirror
+
 
 @dataclass
 class OpenAccessInfo:
@@ -652,6 +704,57 @@ class ArticleActionsScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class SettingsScreen(ModalScreen[Settings | None]):
+    """Modal for configuring the NCBI API key and other service settings (saved locally)."""
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__()
+        self._settings = settings
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="settings_dialog"):
+            yield Label("Settings (saved locally, never committed)")
+            yield Label(
+                "NCBI API key (optional — raises the PubMed rate limit from 3 to 10 req/s)",
+                markup=False,
+            )
+            yield Input(
+                value=self._settings.ncbi_api_key,
+                placeholder="NCBI API key",
+                id="ncbi_api_key_input",
+            )
+            yield Label("Unpaywall contact email (used only for open-access lookups)", markup=False)
+            yield Input(
+                value=self._settings.unpaywall_email,
+                placeholder=UNPAYWALL_EMAIL,
+                id="unpaywall_email_input",
+            )
+            yield Label("Sci-Hub mirror (base URL, trailing slash)", markup=False)
+            yield Input(
+                value=self._settings.scihub_mirror,
+                placeholder=SCI_HUB_BASE_URL,
+                id="scihub_mirror_input",
+            )
+            with Horizontal():
+                yield Button("Save", variant="primary", id="save")
+                yield Button("Cancel", id="cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#ncbi_api_key_input", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save":
+            self.dismiss(
+                Settings(
+                    ncbi_api_key=self.query_one("#ncbi_api_key_input", Input).value.strip(),
+                    unpaywall_email=self.query_one("#unpaywall_email_input", Input).value.strip(),
+                    scihub_mirror=self.query_one("#scihub_mirror_input", Input).value.strip(),
+                )
+            )
+        else:
+            self.dismiss(None)
+
+
 class ScicherApp(App):
     """TUI for building PubMed advanced-search queries and browsing results."""
 
@@ -673,11 +776,14 @@ class ScicherApp(App):
         ("e", "export_csv", "Export"),
         ("l", "log_query", "Log query"),
         ("o", "load_query", "Load query"),
+        ("p", "edit_settings", "Settings"),
         ("q", "quit", "Quit"),
     ]
 
     def __init__(self) -> None:
         super().__init__()
+        self.settings = load_settings()
+        apply_settings(self.settings)
         self.groups: list[Group] = [Group()]
         self.filters = Filters()
         self._fetcher = None
@@ -873,6 +979,22 @@ class ScicherApp(App):
             self.query_one("#status", Label).update(f"Loaded saved query: {query}")
 
         self.push_screen(LoadQueryScreen(DEFAULT_QUERY_LOG_PATH), handle_result)
+
+    def action_edit_settings(self) -> None:
+        def handle_result(updated: Settings | None) -> None:
+            if updated is None:
+                return
+            self.settings = updated
+            apply_settings(updated)
+            self._fetcher = None  # force a fresh client so a new API key takes effect
+            try:
+                save_settings(updated)
+            except OSError as exc:
+                self.query_one("#status", Label).update(f"Could not save settings: {exc}")
+                return
+            self.query_one("#status", Label).update("Settings saved.")
+
+        self.push_screen(SettingsScreen(self.settings), handle_result)
 
     def action_run_search(self) -> None:
         query = self.current_query()
