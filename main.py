@@ -623,41 +623,56 @@ class FiltersScreen(ModalScreen[Filters | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="filters_dialog"):
             yield Label("Filters")
-            with Horizontal(id="year_row"):
-                yield Input(
-                    value=self._filters.year_from,
-                    placeholder="From year, e.g. 2015",
-                    restrict=r"\d*",
-                    id="year_from_input",
+            with VerticalScroll(id="filters_fields"):
+                yield Label(
+                    "Year published (leave both blank for no limit)", classes="filter_hint"
                 )
-                yield Input(
-                    value=self._filters.year_to,
-                    placeholder="To year, e.g. 2025",
-                    restrict=r"\d*",
-                    id="year_to_input",
+                with Horizontal(id="year_row"):
+                    yield Input(
+                        value=self._filters.year_from,
+                        placeholder="From year, e.g. 2015",
+                        restrict=r"\d*",
+                        id="year_from_input",
+                    )
+                    yield Input(
+                        value=self._filters.year_to,
+                        placeholder="To year, e.g. 2025",
+                        restrict=r"\d*",
+                        id="year_to_input",
+                    )
+                yield Label(
+                    "Publication type — PubMed only, arXiv has no equivalent "
+                    "(any selected are OR-ed)",
+                    classes="filter_hint",
                 )
-            yield Label("Publication type (any selected are OR-ed)")
-            yield SelectionList[str](
-                *[
-                    (pt, pt, pt in self._filters.publication_types)
-                    for pt in PUBLICATION_TYPE_CHOICES
-                ],
-                id="pub_types",
-            )
-            yield Label("Species")
-            yield Select(SPECIES_CHOICES, value=self._filters.species, id="species_select")
-            yield Checkbox(
-                "Free full text only",
-                value=self._filters.free_full_text,
-                id="free_full_text",
-            )
-            yield Label("Max results (caps load on PubMed/arXiv — each result also fetches metadata)")
-            yield Select(
-                MAX_RESULTS_CHOICES,
-                value=self._filters.max_results,
-                allow_blank=False,
-                id="max_results_select",
-            )
+                yield SelectionList[str](
+                    *[
+                        (pt, pt, pt in self._filters.publication_types)
+                        for pt in PUBLICATION_TYPE_CHOICES
+                    ],
+                    id="pub_types",
+                )
+                yield Label(
+                    "Species — PubMed only (MeSH), arXiv has no species metadata",
+                    classes="filter_hint",
+                )
+                yield Select(SPECIES_CHOICES, value=self._filters.species, id="species_select")
+                yield Checkbox(
+                    "Free full text only (PubMed only — every arXiv preprint is already free)",
+                    value=self._filters.free_full_text,
+                    id="free_full_text",
+                )
+                yield Label(
+                    "Max results — applies to both PubMed and arXiv; each result also "
+                    "triggers a metadata fetch, so higher = slower and more API calls",
+                    classes="filter_hint",
+                )
+                yield Select(
+                    MAX_RESULTS_CHOICES,
+                    value=self._filters.max_results,
+                    allow_blank=False,
+                    id="max_results_select",
+                )
             with Horizontal():
                 yield Button("Apply", variant="primary", id="apply")
                 yield Button("Clear filters", id="clear")
@@ -999,8 +1014,22 @@ class ScicherApp(App):
                     with Vertical(id="query_panel"):
                         yield ListView(id="groups_list")
                         with Horizontal(id="source_toggles"):
-                            yield Checkbox("PubMed", value=True, id="source_pubmed")
-                            yield Checkbox("arXiv", value=True, id="source_arxiv")
+                            yield Checkbox(
+                                "PubMed",
+                                value=True,
+                                id="source_pubmed",
+                                tooltip="Search PubMed for this query. Uncheck to skip it.",
+                            )
+                            yield Checkbox(
+                                "arXiv",
+                                value=True,
+                                id="source_arxiv",
+                                tooltip=(
+                                    "Search arXiv using the compatible parts of this query "
+                                    "(MeSH/Journal terms have no arXiv equivalent and are "
+                                    "dropped from that half of the search). Uncheck to skip it."
+                                ),
+                            )
                     with Vertical(id="query_section"):
                         with VerticalScroll(id="query_preview_scroll"):
                             yield Static("", id="query_preview", markup=False)

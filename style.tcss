@@ -289,6 +289,17 @@ SettingsScreen {
     margin-top: 1;
 }
 
+#filters_fields {
+    height: auto;
+    max-height: 18;
+}
+
+.filter_hint {
+    color: $secondary;
+    text-style: italic;
+    margin-top: 1;
+}
+
 #year_row Input {
     width: 1fr;
     margin-right: 1;
