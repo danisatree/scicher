@@ -1178,6 +1178,7 @@ class ScicherApp(App):
         ("p", "edit_settings", "Settings"),
         ("t", "toggle_theme", "Toggle theme"),
         ("q", "quit", "Quit"),
+        Binding("ctrl+p", "command_palette", "Commands", show=False),
     ]
 
     def __init__(self) -> None:
