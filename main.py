@@ -716,7 +716,6 @@ class SettingsScreen(ModalScreen[Settings | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_dialog"):
-            yield Label("Settings (saved locally, never committed)")
             yield Label(
                 "NCBI API key (optional — raises the PubMed rate limit from 3 to 10 req/s)",
                 markup=False,
