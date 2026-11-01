@@ -7,6 +7,7 @@ import json
 import os
 import re
 import webbrowser
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from functools import lru_cache
@@ -14,9 +15,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import requests
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import ModalScreen
+from textual.screen import ModalScreen, Screen
 from textual.suggester import SuggestFromList
 from textual.widgets import (
     Button,
@@ -818,6 +819,12 @@ class ScicherApp(App):
             yield Label("", id="status", markup=False)
             yield ProgressBar(id="search_progress", show_eta=False)
         yield Footer()
+
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        # Drop the built-in "Theme" picker: we only ship two themes, toggled with 't'.
+        for command in super().get_system_commands(screen):
+            if command.title != "Theme":
+                yield command
 
     def on_mount(self) -> None:
         self.register_theme(SCIENCE_DARK_THEME)
