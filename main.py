@@ -1174,6 +1174,7 @@ class ScicherApp(App):
         ("e", "export_csv", "Export"),
         ("l", "log_query", "Log query"),
         ("o", "load_query", "Load query"),
+        ("u", "undo_remove", "Undo remove"),
         ("p", "edit_settings", "Settings"),
         ("t", "toggle_theme", "Toggle theme"),
         ("q", "quit", "Quit"),
@@ -1191,6 +1192,7 @@ class ScicherApp(App):
         self._articles: dict[str, Any] = {}
         self._sort_column: str | None = None
         self._sort_reverse = False
+        self._last_removed: tuple[str, Any, int] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1432,6 +1434,23 @@ class ScicherApp(App):
 
         self.push_screen(LoadQueryScreen(DEFAULT_QUERY_LOG_PATH), handle_result)
 
+    def action_undo_remove(self) -> None:
+        status = self.query_one("#status", Label)
+        if self._last_removed is None:
+            status.update("Nothing to undo.")
+            return
+        key, article, index = self._last_removed
+        self._last_removed = None
+        if article is not None:
+            self._articles[key] = article
+        if key not in self._last_result_keys:
+            self._last_result_keys.insert(min(index, len(self._last_result_keys)), key)
+        table = self.query_one("#results_table", DataTable)
+        table.add_row(*self._row_values(key, article), key=key)  # always appended at the bottom
+        id_label = "arXiv ID" if key.startswith("arxiv:") else "PMID"
+        status.update(f"Restored {id_label} {key.split(':', 1)[1]} to results.")
+        self._update_kpis()
+
     def action_edit_settings(self) -> None:
         def handle_result(updated: Settings | None) -> None:
             if updated is None:
@@ -1550,24 +1569,12 @@ class ScicherApp(App):
                 key = f"pubmed:{pmid}"
                 if article is not None:
                     self._articles[key] = article
-                    title = article.title or "(no title)"
-                    year = article.year or "?"
-                    journal = article.journal or ""
-                    language = pubmed_language(article) or "-"
-                else:
-                    title = "(failed to fetch details)"
-                    year = "?"
-                    journal = ""
-                    language = "-"
-                table.add_row("PubMed", pmid, year, language, journal, title, key=key)
+                table.add_row(*self._row_values(key, article), key=key)
 
         for record in arxiv_records:
             key = f"arxiv:{record.id}"
             self._articles[key] = record
-            table.add_row(
-                "arXiv", record.id, record.year or "?", "-", record.journal,
-                record.title or "(no title)", key=key
-            )
+            table.add_row(*self._row_values(key, record), key=key)
             progress.advance(1)
 
         progress.display = False
@@ -1580,6 +1587,21 @@ class ScicherApp(App):
             if note:
                 summary += f" [{note}]"
         status.update(summary)
+
+    def _row_values(self, key: str, article: Any) -> tuple[str, str, str, str, str, str]:
+        """Builds a §3 table row's cell values for an article, or a "failed to fetch"
+        placeholder if article is None (a PubMed fetch that didn't succeed). Shared between
+        populating the table after a search and re-adding a row undone with 'u'."""
+        is_arxiv = key.startswith("arxiv:")
+        display_id = key.split(":", 1)[1]
+        source = "arXiv" if is_arxiv else "PubMed"
+        if article is None:
+            return (source, display_id, "?", "-", "", "(failed to fetch details)")
+        year = article.year or "?"
+        language = "-" if is_arxiv else (pubmed_language(article) or "-")
+        journal = article.journal or ""
+        title = article.title or "(no title)"
+        return (source, display_id, year, language, journal, title)
 
     def _update_kpis(self) -> None:
         """Recomputed from self._last_result_keys/self._articles (not passed-in counts),
@@ -1644,11 +1666,17 @@ class ScicherApp(App):
             ArticleActionsScreen(display_id, article, access, id_label, is_arxiv)
         )
         if result == "remove":
+            row_index = (
+                self._last_result_keys.index(key) if key in self._last_result_keys else 0
+            )
+            self._last_removed = (key, self._articles.get(key), row_index)
             self.query_one("#results_table", DataTable).remove_row(key)
             self._articles.pop(key, None)
             if key in self._last_result_keys:
                 self._last_result_keys.remove(key)
-            self.query_one("#status", Label).update(f"Removed {id_label} {display_id} from results.")
+            self.query_one("#status", Label).update(
+                f"Removed {id_label} {display_id} from results. Press 'u' to undo."
+            )
             self._update_kpis()
         elif result == "fulltext":
             status = self.query_one("#status", Label)
