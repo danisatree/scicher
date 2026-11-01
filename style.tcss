@@ -53,14 +53,6 @@ CommandPalette > Vertical {
     width: 90;
 }
 
-CommandPalette #--input {
-    border: hkey $primary 50%;
-}
-
-CommandList {
-    max-height: 60vh;
-}
-
 #main_area {
     height: 1fr;
     padding: 0 1;
@@ -224,23 +216,22 @@ SettingsScreen {
 }
 
 /* Single source of truth for every modal dialog's chrome (border/background/padding),
-   including the built-in command palette, so they all read as one visual family. */
-#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog {
+   including the built-in command palette's results list (CommandList), so they all
+   read as one visual family. The palette's search input is hidden below (its 4
+   commands are a fixed list, not worth searching), so the results list is the only
+   box it needs — the palette's own container has dock/overlay children that don't
+   size correctly for a border, so we skip it and border the list directly. */
+#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog,
+CommandList {
     height: auto;
+    max-height: 60vh;
     padding: 1 2;
     border: thick $primary;
     background: $surface;
 }
 
-/* Textual's built-in CommandPalette CSS sets this container to visibility:hidden
-   (only specific children override it back to visible); without re-overriding it
-   here, our border/background below would be set but silently never drawn. */
-CommandPalette > Vertical {
-    height: auto;
-    visibility: visible;
-    padding: 1 2;
-    border: thick $primary;
-    background: $surface;
+CommandPalette #--input {
+    display: none;
 }
 
 #dialog, #export_dialog, #log_dialog, #actions_dialog {
