@@ -439,6 +439,17 @@ CSV_FIELDS = [
 ]
 
 
+def pubmed_language(article: Any) -> str:
+    """ISO 639-2/B language code (e.g. "eng", "fre") from PubMed's <Language> element.
+    metapub.PubMedArticle doesn't expose this as an attribute, but it's on the underlying
+    lxml tree. Returns "" if unavailable (no raw content, or a record predating the field)."""
+    content = getattr(article, "content", None)
+    if content is None:
+        return ""
+    element = content.find(".//Language")
+    return (element.text or "").strip() if element is not None else ""
+
+
 def article_to_row(pmid: str, article: Any, source: str = "PubMed") -> dict[str, str]:
     if article is None:
         return {field_name: "" for field_name in CSV_FIELDS} | {"pmid": pmid, "source": source}
@@ -1262,6 +1273,7 @@ class ScicherApp(App):
             ("Source", "source"),
             ("ID", "pmid"),
             ("Year", "year"),
+            ("Lang", "language"),
             ("Journal", "journal"),
             ("Title", "title"),
         )
@@ -1528,17 +1540,20 @@ class ScicherApp(App):
                     title = article.title or "(no title)"
                     year = article.year or "?"
                     journal = article.journal or ""
+                    language = pubmed_language(article) or "-"
                 else:
                     title = "(failed to fetch details)"
                     year = "?"
                     journal = ""
-                table.add_row("PubMed", pmid, year, journal, title, key=key)
+                    language = "-"
+                table.add_row("PubMed", pmid, year, language, journal, title, key=key)
 
         for record in arxiv_records:
             key = f"arxiv:{record.id}"
             self._articles[key] = record
             table.add_row(
-                "arXiv", record.id, record.year or "?", record.journal, record.title or "(no title)", key=key
+                "arXiv", record.id, record.year or "?", "-", record.journal,
+                record.title or "(no title)", key=key
             )
             progress.advance(1)
 
