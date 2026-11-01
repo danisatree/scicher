@@ -129,6 +129,13 @@ CommandPalette > Vertical {
     border: round $accent;
 }
 
+/* Cancel Textual's built-in focus background-tint on these widgets (ListView,
+   VerticalScroll, DataTable each default to one) — the border above is the only
+   active-section indicator; the background underneath should stay untouched. */
+#groups_list:focus, #query_preview_scroll:focus, #detail_scroll:focus, #results_table:focus {
+    background-tint: $foreground 0%;
+}
+
 Button {
     border: tall $primary;
     background: $surface;
