@@ -246,7 +246,133 @@ def describe_filters(filters: Filters) -> str:
     return ", ".join(parts)
 
 
+# --- arXiv: a second, optional search source alongside PubMed -----------------------
+
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
+ARXIV_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+
+# Maps a builder field to an arXiv query prefix; fields with no arXiv equivalent
+# (MeSH, Journal, raw/unparsed) are simply absent and get dropped from the arXiv half
+# of the search rather than mistranslated into a meaningless full-text match.
+ARXIV_FIELD_PREFIX = {
+    "title": "ti",
+    "tw": "all",
+    "au": "au",
+}
+
+
+@dataclass
+class ArxivRecord:
+    """Exposes the same attribute names `_show_detail`/`article_to_row` read off a
+    metapub PubMedArticle, so both sources flow through the same display/export code."""
+
+    id: str
+    title: str = ""
+    authors: list[str] = field(default_factory=list)
+    abstract: str = ""
+    year: str = ""
+    url: str = ""
+    pdf_url: str = ""
+    categories: list[str] = field(default_factory=list)
+    doi: str | None = None
+    journal: str = "arXiv"
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    pmc: str | None = None
+    issn: str | None = None
+    publication_types: list[str] = field(default_factory=lambda: ["Preprint"])
+    mesh: list[str] = field(default_factory=list)
+
+    @property
+    def keywords(self) -> list[str]:
+        return self.categories
+
+
+def render_arxiv_term(term: Term) -> str | None:
+    prefix = ARXIV_FIELD_PREFIX.get(term.field)
+    value = f'"{term.value}"' if " " in term.value else term.value
+    if term.field == "title/abstract":
+        return f"(ti:{value} OR abs:{value})"
+    if prefix is None:
+        return None  # MeSH / Journal / raw-unparsed: no arXiv equivalent, drop the term
+    return f"{prefix}:{value}"
+
+
+def render_arxiv_group(group: Group) -> str | None:
+    rendered = [r for r in (render_arxiv_term(t) for t in group.terms) if r]
+    if not rendered:
+        return None
+    if len(rendered) == 1:
+        return rendered[0]
+    return "(" + " OR ".join(rendered) + ")"
+
+
+def build_arxiv_query(groups: list[Group]) -> str | None:
+    """Best-effort translation of the same term builder into arXiv's query syntax.
+
+    Returns None if nothing in the query has an arXiv-compatible field (e.g. a
+    MeSH-only query), so the caller can skip the arXiv search rather than run an
+    unrestricted one.
+    """
+    clauses = [c for c in (render_arxiv_group(g) for g in groups) if c]
+    if not clauses:
+        return None
+    return " AND ".join(clauses)
+
+
+def fetch_arxiv(query: str, max_results: int = 50) -> list[ArxivRecord]:
+    import xml.etree.ElementTree as ET
+
+    resp = requests.get(
+        ARXIV_API_URL,
+        params={"search_query": query, "max_results": max_results},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    root = ET.fromstring(resp.text)
+
+    records = []
+    for entry in root.findall("atom:entry", ARXIV_NS):
+        entry_id = (entry.findtext("atom:id", default="", namespaces=ARXIV_NS) or "").strip()
+        arxiv_id = entry_id.rsplit("/", 1)[-1] if entry_id else ""
+        published = entry.findtext("atom:published", default="", namespaces=ARXIV_NS) or ""
+        doi_el = entry.find("arxiv:doi", ARXIV_NS)
+        pdf_url = next(
+            (
+                link.get("href", "")
+                for link in entry.findall("atom:link", ARXIV_NS)
+                if link.get("title") == "pdf"
+            ),
+            "",
+        )
+        records.append(
+            ArxivRecord(
+                id=arxiv_id,
+                title=" ".join(
+                    (entry.findtext("atom:title", default="", namespaces=ARXIV_NS) or "").split()
+                ),
+                authors=[
+                    " ".join((a.findtext("atom:name", default="", namespaces=ARXIV_NS) or "").split())
+                    for a in entry.findall("atom:author", ARXIV_NS)
+                ],
+                abstract=" ".join(
+                    (entry.findtext("atom:summary", default="", namespaces=ARXIV_NS) or "").split()
+                ),
+                year=published[:4],
+                url=entry_id,
+                pdf_url=pdf_url,
+                categories=[
+                    c.get("term", "") for c in entry.findall("atom:category", ARXIV_NS) if c.get("term")
+                ],
+                doi=doi_el.text.strip() if doi_el is not None and doi_el.text else None,
+            )
+        )
+    return records
+
+
 CSV_FIELDS = [
+    "source",
     "pmid",
     "title",
     "authors",
@@ -266,10 +392,11 @@ CSV_FIELDS = [
 ]
 
 
-def article_to_row(pmid: str, article: Any) -> dict[str, str]:
+def article_to_row(pmid: str, article: Any, source: str = "PubMed") -> dict[str, str]:
     if article is None:
-        return {field_name: "" for field_name in CSV_FIELDS} | {"pmid": pmid}
+        return {field_name: "" for field_name in CSV_FIELDS} | {"pmid": pmid, "source": source}
     return {
+        "source": source,
         "pmid": pmid,
         "title": article.title or "",
         "authors": "; ".join(article.authors or []),
@@ -661,6 +788,18 @@ def resolve_open_access(pmc: str | None, doi: str | None) -> OpenAccessInfo:
     return OpenAccessInfo(is_free=False, source="Unknown")
 
 
+def resolve_access_for(key: str, article: Any) -> OpenAccessInfo:
+    """Like resolve_open_access, but arXiv preprints are always freely downloadable —
+    no need to spend a network round-trip asking Unpaywall about one."""
+    if key.startswith("arxiv:"):
+        return OpenAccessInfo(
+            is_free=True,
+            source="Open Access (arXiv preprint)",
+            url=getattr(article, "pdf_url", "") or getattr(article, "url", None),
+        )
+    return resolve_open_access(article.pmc, article.doi)
+
+
 class ArticleActionsScreen(ModalScreen[None]):
     """Modal offering to open the selected article's PubMed page, free copy, or Sci-Hub mirror."""
 
@@ -671,6 +810,7 @@ class ArticleActionsScreen(ModalScreen[None]):
         url: str | None,
         doi: str | None,
         access: OpenAccessInfo,
+        id_label: str = "PMID",
     ) -> None:
         super().__init__()
         self._pmid = pmid
@@ -678,10 +818,11 @@ class ArticleActionsScreen(ModalScreen[None]):
         self._url = url
         self._doi = doi
         self._access = access
+        self._id_label = id_label
 
     def compose(self) -> ComposeResult:
         with Vertical(id="actions_dialog"):
-            yield Label(f"PMID {self._pmid} — open where?", markup=False)
+            yield Label(f"{self._id_label} {self._pmid} — open where?", markup=False)
             yield Label(self._title or "(no title)", markup=False, id="actions_title")
             yield Label(f"DOI: {self._doi or '(none on record)'}", markup=False)
             yield Label(f"Access: {self._access.source}", markup=False, id="actions_access")
@@ -790,7 +931,7 @@ class ScicherApp(App):
         self.groups: list[Group] = [Group()]
         self.filters = Filters()
         self._fetcher = None
-        self._last_pmids: list[str] = []
+        self._last_result_keys: list[str] = []
         self._last_query: str | None = None
         self._articles: dict[str, Any] = {}
         self._sort_column: str | None = None
@@ -846,7 +987,13 @@ class ScicherApp(App):
 
         self.refresh_groups_list()
         table = self.query_one("#results_table", DataTable)
-        table.add_columns(("PMID", "pmid"), ("Year", "year"), ("Journal", "journal"), ("Title", "title"))
+        table.add_columns(
+            ("Source", "source"),
+            ("ID", "pmid"),
+            ("Year", "year"),
+            ("Journal", "journal"),
+            ("Title", "title"),
+        )
         table.cursor_type = "row"
         table.zebra_stripes = True
 
@@ -1034,31 +1181,51 @@ class ScicherApp(App):
         )
         progress.display = True
         progress.update(total=None, progress=0)
+
+        fetcher = self.get_fetcher()
         try:
-            fetcher = self.get_fetcher()
             pmids = await self.run_in_thread(lambda: fetcher.pmids_for_query(query, retmax=50))
         except Exception as exc:  # noqa: BLE001 - surface any NCBI/network error to the user
-            status.update(f"Search failed: {exc}")
-            progress.display = False
-            return
+            pmids = []
+            pubmed_note = f"PubMed search failed: {exc}"
+        else:
+            pubmed_note = ""
 
-        self._last_pmids = pmids
+        arxiv_query = build_arxiv_query(self.groups)
+        arxiv_records: list[ArxivRecord] = []
+        arxiv_note = ""
+        if arxiv_query:
+            try:
+                arxiv_records = await self.run_in_thread(lambda: fetch_arxiv(arxiv_query))
+            except Exception as exc:  # noqa: BLE001 - arXiv is best-effort, never block PubMed results
+                arxiv_note = f"arXiv search failed: {exc}"
+        else:
+            arxiv_note = "arXiv skipped (no compatible terms, e.g. MeSH-only query)"
+
+        total = len(pmids) + len(arxiv_records)
+        self._last_result_keys = [f"pubmed:{pmid}" for pmid in pmids] + [
+            f"arxiv:{r.id}" for r in arxiv_records
+        ]
         self._last_query = query
         self._articles = {}
         try:
-            append_query_log(DEFAULT_QUERY_LOG_PATH, query, str(len(pmids)))
+            append_query_log(DEFAULT_QUERY_LOG_PATH, query, str(total))
         except OSError:
             pass  # non-fatal: searching should still work even if the log can't be written
-        status.update(f"Found {len(pmids)} result(s), loading details...")
-        if not pmids:
+
+        status.update(f"Found {len(pmids)} PubMed + {len(arxiv_records)} arXiv result(s)...")
+        if total == 0:
             progress.display = False
+            if pubmed_note:
+                status.update(pubmed_note)
             return
 
-        progress.update(total=len(pmids), progress=0)
+        progress.update(total=total, progress=0)
         for pmid in pmids:
             article = await self._fetch_article_with_retries(fetcher, pmid)
+            key = f"pubmed:{pmid}"
             if article is not None:
-                self._articles[pmid] = article
+                self._articles[key] = article
                 title = article.title or "(no title)"
                 year = article.year or "?"
                 journal = article.journal or ""
@@ -1066,13 +1233,26 @@ class ScicherApp(App):
                 title = "(failed to fetch details)"
                 year = "?"
                 journal = ""
-            table.add_row(pmid, year, journal, title, key=pmid)
+            table.add_row("PubMed", pmid, year, journal, title, key=key)
+            progress.advance(1)
+
+        for record in arxiv_records:
+            key = f"arxiv:{record.id}"
+            self._articles[key] = record
+            table.add_row(
+                "arXiv", record.id, record.year or "?", record.journal, record.title or "(no title)", key=key
+            )
             progress.advance(1)
 
         progress.display = False
-        status.update(
-            f"Found {len(pmids)} result(s) for: {query} — details loaded, ready to export."
+        summary = (
+            f"Found {len(pmids)} PubMed + {len(arxiv_records)} arXiv result(s) "
+            f"for: {query} — details loaded, ready to export."
         )
+        for note in (pubmed_note, arxiv_note):
+            if note:
+                summary += f" [{note}]"
+        status.update(summary)
 
     async def run_in_thread(self, fn):
         return await asyncio.to_thread(fn)
@@ -1102,37 +1282,43 @@ class ScicherApp(App):
             self._open_article_actions(str(event.row_key.value)), group="detail", exclusive=True
         )
 
-    async def _open_article_actions(self, pmid: str) -> None:
-        article = self._articles.get(pmid)
-        if article is None:
+    async def _open_article_actions(self, key: str) -> None:
+        article = self._articles.get(key)
+        if article is None and key.startswith("pubmed:"):
             fetcher = self.get_fetcher()
-            article = await self._fetch_article_with_retries(fetcher, pmid)
-            if article is None:
-                self.query_one("#status", Label).update(
-                    f"Could not load PMID {pmid} to open actions."
-                )
-                return
-            self._articles[pmid] = article
-        access = await self.run_in_thread(lambda: resolve_open_access(article.pmc, article.doi))
+            article = await self._fetch_article_with_retries(fetcher, key.split(":", 1)[1])
+            if article is not None:
+                self._articles[key] = article
+        if article is None:
+            self.query_one("#status", Label).update(f"Could not load {key} to open actions.")
+            return
+        access = await self.run_in_thread(lambda: resolve_access_for(key, article))
+        display_id = key.split(":", 1)[1]
+        id_label = "arXiv ID" if key.startswith("arxiv:") else "PMID"
         self.push_screen(
-            ArticleActionsScreen(pmid, article.title, article.url, article.doi, access)
+            ArticleActionsScreen(
+                display_id, article.title, article.url, article.doi, access, id_label
+            )
         )
 
-    async def _show_detail(self, pmid: str) -> None:
+    async def _show_detail(self, key: str) -> None:
         detail = self.query_one("#detail_text", Static)
-        article = self._articles.get(pmid)
-        if article is None:
-            detail.update(f"Loading metadata for PMID {pmid}...")
+        display_id = key.split(":", 1)[1]
+        id_label = "PMID" if key.startswith("pubmed:") else "arXiv ID"
+        article = self._articles.get(key)
+        if article is None and key.startswith("pubmed:"):
+            detail.update(f"Loading metadata for {id_label} {display_id}...")
             fetcher = self.get_fetcher()
-            article = await self._fetch_article_with_retries(fetcher, pmid)
-            if article is None:
-                detail.update(f"Failed to load PMID {pmid} after several attempts.")
-                return
-            self._articles[pmid] = article
+            article = await self._fetch_article_with_retries(fetcher, display_id)
+            if article is not None:
+                self._articles[key] = article
+        if article is None:
+            detail.update(f"Failed to load {id_label} {display_id} after several attempts.")
+            return
 
         def render(access_line: str) -> str:
             return (
-                f"PMID: {pmid}\n"
+                f"{id_label}: {display_id}\n"
                 f"Title: {article.title}\n"
                 f"Authors: {', '.join(article.authors or [])}\n"
                 f"Journal: {article.journal} ({article.year})\n"
@@ -1145,7 +1331,9 @@ class ScicherApp(App):
                 f"Abstract:\n{article.abstract or '(no abstract)'}"
             )
 
-        if article.pmc:
+        if key.startswith("arxiv:"):
+            detail.update(render(resolve_access_for(key, article).source))
+        elif article.pmc:
             detail.update(render("PMC (free)"))
         elif article.doi:
             detail.update(render("checking..."))
@@ -1162,7 +1350,7 @@ class ScicherApp(App):
             return
 
         default_path = DEFAULT_QUERY_LOG_PATH
-        result_count = str(len(self._last_pmids)) if query == self._last_query else ""
+        result_count = str(len(self._last_result_keys)) if query == self._last_query else ""
 
         def handle_result(path: str | None) -> None:
             if not path:
@@ -1178,7 +1366,7 @@ class ScicherApp(App):
 
     def action_export_csv(self) -> None:
         status = self.query_one("#status", Label)
-        if not self._last_pmids:
+        if not self._last_result_keys:
             status.update("Run a search before exporting.")
             return
 
@@ -1187,7 +1375,14 @@ class ScicherApp(App):
         def handle_result(path: str | None) -> None:
             if not path:
                 return
-            rows = [article_to_row(pmid, self._articles.get(pmid)) for pmid in self._last_pmids]
+            rows = [
+                article_to_row(
+                    key.split(":", 1)[1],
+                    self._articles.get(key),
+                    source="arXiv" if key.startswith("arxiv:") else "PubMed",
+                )
+                for key in self._last_result_keys
+            ]
             try:
                 write_results_csv(path, rows)
             except OSError as exc:
