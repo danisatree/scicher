@@ -1196,6 +1196,12 @@ class ScicherApp(App):
         yield Header()
         with Vertical(id="main_area"):
             with Vertical(id="results_section"):
+                with Horizontal(id="kpi_row"):
+                    yield Static("-", markup=False, id="kpi_total", classes="kpi_box")
+                    yield Static("-", markup=False, id="kpi_sources", classes="kpi_box")
+                    yield Static("-", markup=False, id="kpi_years", classes="kpi_box")
+                    yield Static("-", markup=False, id="kpi_no_abstract", classes="kpi_box")
+                    yield Static("-", markup=False, id="kpi_open_access", classes="kpi_box")
                 yield ResultsTable(id="results_table")
             with Horizontal(id="bottom_row"):
                 with Vertical(id="left_col"):
@@ -1263,6 +1269,12 @@ class ScicherApp(App):
 
         results_section = self.query_one("#results_section")
         results_section.border_title = "3. FOUND ARTICLES"
+
+        self.query_one("#kpi_total").border_title = "FOUND"
+        self.query_one("#kpi_sources").border_title = "SOURCES"
+        self.query_one("#kpi_years").border_title = "YEAR RANGE"
+        self.query_one("#kpi_no_abstract").border_title = "NO ABSTRACT"
+        self.query_one("#kpi_open_access").border_title = "OPEN ACCESS (PMC)"
 
         detail_section = self.query_one("#detail_section")
         detail_section.border_title = "4. ARTICLE METADATA"
@@ -1517,6 +1529,7 @@ class ScicherApp(App):
         status.update(f"Found {len(pmids)} PubMed + {len(arxiv_records)} arXiv result(s). {notes}")
         if total == 0:
             progress.display = False
+            self._update_kpis()
             return
 
         progress.update(total=total, progress=0)
@@ -1558,6 +1571,7 @@ class ScicherApp(App):
             progress.advance(1)
 
         progress.display = False
+        self._update_kpis()
         summary = (
             f"Found {len(pmids)} PubMed + {len(arxiv_records)} arXiv result(s) "
             f"for: {query} — details loaded, ready to export."
@@ -1566,6 +1580,23 @@ class ScicherApp(App):
             if note:
                 summary += f" [{note}]"
         status.update(summary)
+
+    def _update_kpis(self) -> None:
+        """Recomputed from self._last_result_keys/self._articles (not passed-in counts),
+        so removing a result from §3 keeps these numbers accurate without a re-search."""
+        pmid_count = sum(1 for key in self._last_result_keys if key.startswith("pubmed:"))
+        arxiv_count = sum(1 for key in self._last_result_keys if key.startswith("arxiv:"))
+        articles = [self._articles[key] for key in self._last_result_keys if key in self._articles]
+        years = [int(a.year) for a in articles if a.year and str(a.year).isdigit()]
+        no_abstract = sum(1 for a in articles if not getattr(a, "abstract", None))
+        open_access = sum(1 for a in articles if getattr(a, "pmc", None))
+        self.query_one("#kpi_total", Static).update(str(pmid_count + arxiv_count))
+        self.query_one("#kpi_sources", Static).update(f"{pmid_count} PubMed / {arxiv_count} arXiv")
+        self.query_one("#kpi_years", Static).update(
+            f"{min(years)}–{max(years)}" if years else "-"
+        )
+        self.query_one("#kpi_no_abstract", Static).update(str(no_abstract))
+        self.query_one("#kpi_open_access", Static).update(str(open_access))
 
     async def run_in_thread(self, fn):
         return await asyncio.to_thread(fn)
@@ -1618,6 +1649,7 @@ class ScicherApp(App):
             if key in self._last_result_keys:
                 self._last_result_keys.remove(key)
             self.query_one("#status", Label).update(f"Removed {id_label} {display_id} from results.")
+            self._update_kpis()
         elif result == "fulltext":
             status = self.query_one("#status", Label)
             status.update(f"Fetching full text for PMC{article.pmc}...")
