@@ -122,8 +122,11 @@ CommandPalette > Vertical {
     color: $foreground;
 }
 
-#groups_list:focus, #query_preview_scroll:focus, #detail_scroll:focus, #results_table:focus {
-    background-tint: $accent 10%;
+/* Show which section is active via a thicker, differently-colored border on the
+   panel itself rather than tinting its background. */
+#query_panel:focus-within, #query_section:focus-within,
+#results_section:focus-within, #detail_section:focus-within {
+    border: thick $accent;
 }
 
 Button {
