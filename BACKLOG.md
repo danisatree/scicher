@@ -125,3 +125,33 @@ bulk/background use).
   `self._articles`/`self._last_result_keys` path as a normal search),
   not a separate screen, so export/filters/KPIs keep working on them.
 - OpenAlex is the safer default given Semantic Scholar's observed 429s.
+
+## Publish to PyPI, so it's installable via `uvx`/`pipx`/Homebrew tap
+
+Currently only runnable from a cloned repo (`python main.py`). Publishing
+to PyPI would let users run it with `uvx scicher` / `uv tool install
+scicher` without cloning anything; a Homebrew tap (separate maintenance
+burden, see below) could wrap that same PyPI package rather than vendoring
+dependencies itself. Homebrew core is unrealistic for a project this size/
+young — a personal tap is the realistic Homebrew path if that's wanted later.
+
+What's needed:
+- **Restructure into a proper package.** Everything is currently flat in
+  the repo root (`main.py`, `style.tcss`, `theme.py`, `data/mesh_terms.txt`),
+  not a `src/scicher/` package. `style.tcss` (`CSS_PATH = "style.tcss"`)
+  and `data/mesh_terms.txt` (`Path(__file__).parent / "data" / ...`) are
+  loaded relative to the module file, so they need to actually ship inside
+  the package (declared as package data), or the installed app will fail
+  to find them at startup. `main()` / `if __name__ == "__main__":` already
+  exist at the bottom of `main.py` — the entry point logic itself doesn't
+  need to change, just where the file lives.
+- **`pyproject.toml` metadata**: add `[project.scripts] scicher = "scicher.app:main"`
+  (or equivalent post-restructure path); add `requests` to `dependencies`
+  (used directly in `main.py` but not currently declared — presumably
+  pulled in transitively via `metapub`); replace the placeholder
+  `description = "Add your description here"`; add a `license` (no
+  `LICENSE` file or license field exists in the repo at all right now).
+- **Account/naming**: a PyPI account + API token, and confirm the name
+  `scicher` isn't already taken.
+- **Build/publish tooling**: `uv build` (wheel + sdist) then `uv publish`
+  — no need for a separate `twine` dependency, `uv` does both natively.
