@@ -16,9 +16,11 @@ from typing import Any, ClassVar, TypeVar
 
 import requests
 from textual.app import App, ComposeResult, SystemCommand
+from textual.command import DiscoveryHit
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.suggester import SuggestFromList
+from textual.system_commands import SystemCommandsProvider
 from textual.widgets import (
     Button,
     Checkbox,
@@ -982,12 +984,23 @@ class SettingsScreen(EscDismissScreen[Settings | None]):
             self.dismiss(None)
 
 
+class OrderedSystemCommandsProvider(SystemCommandsProvider):
+    """Like SystemCommandsProvider, but keeps App.get_system_commands()'s own order
+    instead of re-sorting it alphabetically — so "Quit" can be placed last."""
+
+    async def discover(self):
+        for name, help_text, callback, discover in self.app.get_system_commands(self.screen):
+            if discover:
+                yield DiscoveryHit(name, callback, help=help_text)
+
+
 class ScicherApp(App):
     """TUI for building PubMed advanced-search queries and browsing results."""
 
     TITLE = ">_ SCICHER"
     SUB_TITLE = "SEARCH CONSOLE"
     CSS_PATH = "style.tcss"
+    COMMANDS: ClassVar = {OrderedSystemCommandsProvider}
     BINDINGS: ClassVar = [
         ("1", "focus_query_terms", "Terms"),
         ("2", "focus_query_preview", "Query"),
@@ -1064,10 +1077,18 @@ class ScicherApp(App):
         yield Footer()
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
-        # Drop the built-in "Theme" picker: we only ship two themes, toggled with 't'.
+        # Drop the built-in "Theme" picker (we only ship two themes, toggled with 't')
+        # and move "Quit" to the end of the list, where it belongs.
+        quit_command: SystemCommand | None = None
         for command in super().get_system_commands(screen):
-            if command.title != "Theme":
-                yield command
+            if command.title == "Theme":
+                continue
+            if command.title == "Quit":
+                quit_command = command
+                continue
+            yield command
+        if quit_command is not None:
+            yield quit_command
 
     def on_mount(self) -> None:
         self.register_theme(SCIENCE_DARK_THEME)
