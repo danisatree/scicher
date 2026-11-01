@@ -108,6 +108,14 @@ SPECIES_CHOICES = [
     ("Animals", "animal"),
 ]
 
+MAX_RESULTS_CHOICES = [
+    ("10 per source", 10),
+    ("25 per source", 25),
+    ("50 per source (default)", 50),
+    ("100 per source", 100),
+    ("200 per source", 200),
+]
+
 
 @dataclass
 class Filters:
@@ -116,6 +124,7 @@ class Filters:
     publication_types: frozenset[str] = frozenset()
     species: str = "any"
     free_full_text: bool = False
+    max_results: int = 50
 
     def is_empty(self) -> bool:
         return not (
@@ -124,6 +133,7 @@ class Filters:
             or self.publication_types
             or self.species != "any"
             or self.free_full_text
+            or self.max_results != 50
         )
 
 
@@ -243,6 +253,8 @@ def describe_filters(filters: Filters) -> str:
         parts.append(filters.species.capitalize())
     if filters.free_full_text:
         parts.append("Free full text")
+    if filters.max_results != 50:
+        parts.append(f"Max {filters.max_results}")
     return ", ".join(parts)
 
 
@@ -369,6 +381,38 @@ def fetch_arxiv(query: str, max_results: int = 50) -> list[ArxivRecord]:
             )
         )
     return records
+
+
+def fetch_pubmed_articles_batch(fetcher: Any, pmids: list[str], chunk_size: int = 200) -> dict[str, Any]:
+    """Fetch metadata for many PMIDs in as few HTTP requests as possible.
+
+    NCBI's efetch accepts a batch of IDs per call; doing one request per article (as
+    metapub's PubMedFetcher.article_by_pmid does) multiplies API load for no benefit.
+    Any PMID missing from the result (a whole chunk failing, or NCBI quietly omitting
+    one) is left for the caller to retry individually.
+    """
+    import xml.etree.ElementTree as ET
+
+    from metapub import PubMedArticle
+
+    articles: dict[str, Any] = {}
+    for start in range(0, len(pmids), chunk_size):
+        chunk = pmids[start : start + chunk_size]
+        try:
+            xml_text = fetcher.qs.efetch({"db": "pubmed", "id": chunk})
+            root = ET.fromstring(xml_text)
+        except Exception:  # noqa: BLE001 - leave this chunk's PMIDs for individual retry
+            continue
+        for el in root.findall(".//PubmedArticle") + root.findall(".//PubmedBookArticle"):
+            pmid_el = el.find(".//PMID")
+            if pmid_el is None or not pmid_el.text:
+                continue
+            wrapped = f"<PubmedArticleSet>{ET.tostring(el, encoding='unicode')}</PubmedArticleSet>"
+            try:
+                articles[pmid_el.text] = PubMedArticle(wrapped)
+            except Exception:  # noqa: BLE001 - malformed entry, leave for individual retry
+                continue
+    return articles
 
 
 CSV_FIELDS = [
@@ -607,6 +651,13 @@ class FiltersScreen(ModalScreen[Filters | None]):
                 value=self._filters.free_full_text,
                 id="free_full_text",
             )
+            yield Label("Max results (caps load on PubMed/arXiv — each result also fetches metadata)")
+            yield Select(
+                MAX_RESULTS_CHOICES,
+                value=self._filters.max_results,
+                allow_blank=False,
+                id="max_results_select",
+            )
             with Horizontal():
                 yield Button("Apply", variant="primary", id="apply")
                 yield Button("Clear filters", id="clear")
@@ -629,6 +680,7 @@ class FiltersScreen(ModalScreen[Filters | None]):
             publication_types=frozenset(pub_types),
             species=str(species),
             free_full_text=self.query_one("#free_full_text", Checkbox).value,
+            max_results=int(self.query_one("#max_results_select", Select).value),
         )
 
 
@@ -1192,12 +1244,15 @@ class ScicherApp(App):
         progress.display = True
         progress.update(total=None, progress=0)
 
+        max_results = self.filters.max_results
         fetcher = self.get_fetcher()
         pmids: list[str] = []
         pubmed_note = ""
         if use_pubmed:
             try:
-                pmids = await self.run_in_thread(lambda: fetcher.pmids_for_query(query, retmax=50))
+                pmids = await self.run_in_thread(
+                    lambda: fetcher.pmids_for_query(query, retmax=max_results)
+                )
             except Exception as exc:  # noqa: BLE001 - surface any NCBI/network error to the user
                 pubmed_note = f"PubMed search failed: {exc}"
         else:
@@ -1209,7 +1264,9 @@ class ScicherApp(App):
             arxiv_query = build_arxiv_query(self.groups)
             if arxiv_query:
                 try:
-                    arxiv_records = await self.run_in_thread(lambda: fetch_arxiv(arxiv_query))
+                    arxiv_records = await self.run_in_thread(
+                        lambda: fetch_arxiv(arxiv_query, max_results=max_results)
+                    )
                 except Exception as exc:  # noqa: BLE001 - arXiv is best-effort, never block PubMed results
                     arxiv_note = f"arXiv search failed: {exc}"
             else:
@@ -1235,20 +1292,31 @@ class ScicherApp(App):
             return
 
         progress.update(total=total, progress=0)
-        for pmid in pmids:
-            article = await self._fetch_article_with_retries(fetcher, pmid)
-            key = f"pubmed:{pmid}"
-            if article is not None:
-                self._articles[key] = article
-                title = article.title or "(no title)"
-                year = article.year or "?"
-                journal = article.journal or ""
-            else:
-                title = "(failed to fetch details)"
-                year = "?"
-                journal = ""
-            table.add_row("PubMed", pmid, year, journal, title, key=key)
-            progress.advance(1)
+        if pmids:
+            pubmed_articles = await self.run_in_thread(
+                lambda: fetch_pubmed_articles_batch(fetcher, pmids)
+            )
+            progress.advance(len(pubmed_articles))
+            for pmid in pmids:
+                if pmid not in pubmed_articles:
+                    article = await self._fetch_article_with_retries(fetcher, pmid)
+                    if article is not None:
+                        pubmed_articles[pmid] = article
+                    progress.advance(1)
+
+            for pmid in pmids:
+                article = pubmed_articles.get(pmid)
+                key = f"pubmed:{pmid}"
+                if article is not None:
+                    self._articles[key] = article
+                    title = article.title or "(no title)"
+                    year = article.year or "?"
+                    journal = article.journal or ""
+                else:
+                    title = "(failed to fetch details)"
+                    year = "?"
+                    journal = ""
+                table.add_row("PubMed", pmid, year, journal, title, key=key)
 
         for record in arxiv_records:
             key = f"arxiv:{record.id}"
