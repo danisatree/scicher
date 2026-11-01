@@ -1670,7 +1670,8 @@ class ScicherApp(App):
                 self._last_result_keys.index(key) if key in self._last_result_keys else 0
             )
             self._last_removed = (key, self._articles.get(key), row_index)
-            self.query_one("#results_table", DataTable).remove_row(key)
+            table = self.query_one("#results_table", DataTable)
+            table.remove_row(key)
             self._articles.pop(key, None)
             if key in self._last_result_keys:
                 self._last_result_keys.remove(key)
@@ -1678,6 +1679,18 @@ class ScicherApp(App):
                 f"Removed {id_label} {display_id} from results. Press 'u' to undo."
             )
             self._update_kpis()
+            # DataTable's own cursor-moved event doesn't fire here: removing a row re-sets
+            # cursor_coordinate to the *same* coordinate (just occupied by a different row
+            # now), and its watcher only posts RowHighlighted when the coordinate changes.
+            # So §4 has to be refreshed for whatever row the cursor landed on, by hand.
+            if table.row_count:
+                new_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+                if new_key is not None:
+                    self.run_worker(self._show_detail(str(new_key)), group="detail")
+            else:
+                self.query_one("#detail_text", Static).update(
+                    "Run a search and highlight a row to see its metadata here."
+                )
         elif result == "fulltext":
             status = self.query_one("#status", Label)
             status.update(f"Fetching full text for PMC{article.pmc}...")
