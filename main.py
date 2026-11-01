@@ -934,27 +934,34 @@ class SettingsScreen(EscDismissScreen[Settings | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="settings_dialog"):
-            yield Label(
-                "NCBI API key (optional — raises the PubMed rate limit from 3 to 10 req/s)",
-                markup=False,
-            )
-            yield Input(
-                value=self._settings.ncbi_api_key,
-                placeholder="NCBI API key",
-                id="ncbi_api_key_input",
-            )
-            yield Label("Unpaywall contact email (used only for open-access lookups)", markup=False)
-            yield Input(
-                value=self._settings.unpaywall_email,
-                placeholder=UNPAYWALL_EMAIL,
-                id="unpaywall_email_input",
-            )
-            yield Label("Sci-Hub mirror (base URL, trailing slash)", markup=False)
-            yield Input(
-                value=self._settings.scihub_mirror,
-                placeholder=SCI_HUB_BASE_URL,
-                id="scihub_mirror_input",
-            )
+            yield Label("Settings")
+            with Horizontal(id="settings_columns"):
+                with Vertical(id="filters_col_left"):
+                    yield Label(
+                        "NCBI API key (optional — raises the PubMed rate limit from 3 to 10 req/s)",
+                        classes="filter_hint",
+                    )
+                    yield Input(
+                        value=self._settings.ncbi_api_key,
+                        placeholder="NCBI API key",
+                        id="ncbi_api_key_input",
+                    )
+                    yield Label(
+                        "Unpaywall contact email (used only for open-access lookups)",
+                        classes="filter_hint",
+                    )
+                    yield Input(
+                        value=self._settings.unpaywall_email,
+                        placeholder=UNPAYWALL_EMAIL,
+                        id="unpaywall_email_input",
+                    )
+                with Vertical(id="filters_col_right"):
+                    yield Label("Sci-Hub mirror (base URL, trailing slash)", classes="filter_hint")
+                    yield Input(
+                        value=self._settings.scihub_mirror,
+                        placeholder=SCI_HUB_BASE_URL,
+                        id="scihub_mirror_input",
+                    )
             with Horizontal():
                 yield Button("Save", variant="primary", id="save")
                 yield Button("Cancel", id="cancel")

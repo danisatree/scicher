@@ -51,13 +51,10 @@ CommandPalette {
 CommandPalette > Vertical {
     margin-top: 2;
     width: 90;
-    height: auto;
-    border: thick $secondary;
-    background: $surface;
 }
 
 CommandPalette #--input {
-    border: hkey $secondary 50%;
+    border: hkey $primary 50%;
 }
 
 CommandList {
@@ -226,12 +223,18 @@ SettingsScreen {
     align: center middle;
 }
 
-#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog {
-    width: 70;
+/* Single source of truth for every modal dialog's chrome (border/background/padding),
+   including the built-in command palette, so they all read as one visual family. */
+#dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog,
+CommandPalette > Vertical {
     height: auto;
     padding: 1 2;
     border: thick $primary;
     background: $surface;
+}
+
+#dialog, #export_dialog, #log_dialog, #actions_dialog {
+    width: 70;
 }
 
 #actions_dialog {
@@ -239,11 +242,16 @@ SettingsScreen {
 }
 
 #settings_dialog {
-    width: 80;
+    width: 120;
+    max-height: 90%;
 }
 
-#settings_dialog Input {
-    margin-bottom: 1;
+#settings_dialog Horizontal, #settings_dialog Input {
+    margin-top: 1;
+}
+
+#settings_dialog > Horizontal {
+    height: auto;
 }
 
 #actions_title {
@@ -277,11 +285,7 @@ SettingsScreen {
 
 #filters_dialog {
     width: 120;
-    height: auto;
     max-height: 90%;
-    padding: 1 2;
-    border: thick $primary;
-    background: $surface;
 }
 
 #filters_dialog Horizontal, #filters_dialog SelectionList,
@@ -305,6 +309,7 @@ SettingsScreen {
 }
 
 .filter_hint {
+    width: 1fr;
     color: $secondary;
     text-style: italic;
     margin-top: 1;
@@ -330,11 +335,7 @@ SettingsScreen {
 
 #load_dialog {
     width: 100;
-    height: auto;
     max-height: 90%;
-    padding: 1 2;
-    border: thick $primary;
-    background: $surface;
 }
 
 #load_path_row {
