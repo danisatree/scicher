@@ -114,6 +114,15 @@ CommandList {
     background: $surface;
 }
 
+#source_toggles {
+    height: auto;
+    margin-top: 1;
+}
+
+#source_toggles Checkbox {
+    margin-right: 2;
+}
+
 #query_preview_scroll {
     height: 1fr;
     background: $surface;

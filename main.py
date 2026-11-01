@@ -946,6 +946,9 @@ class ScicherApp(App):
                 with Vertical(id="left_col"):
                     with Vertical(id="query_panel"):
                         yield ListView(id="groups_list")
+                        with Horizontal(id="source_toggles"):
+                            yield Checkbox("PubMed", value=True, id="source_pubmed")
+                            yield Checkbox("arXiv", value=True, id="source_arxiv")
                     with Vertical(id="query_section"):
                         with VerticalScroll(id="query_preview_scroll"):
                             yield Static("", id="query_preview", markup=False)
@@ -1168,10 +1171,17 @@ class ScicherApp(App):
             self.query_one("#status", Label).update("Add at least one term before searching.")
             return
         status = self.query_one("#status", Label)
+        use_pubmed = self.query_one("#source_pubmed", Checkbox).value
+        use_arxiv = self.query_one("#source_arxiv", Checkbox).value
+        if not use_pubmed and not use_arxiv:
+            status.update("Enable at least one source (PubMed or arXiv) before searching.")
+            return
         status.update(f"Searching: {query} ...")
-        self.run_worker(self._do_search(query), group="search", exclusive=True)
+        self.run_worker(
+            self._do_search(query, use_pubmed, use_arxiv), group="search", exclusive=True
+        )
 
-    async def _do_search(self, query: str) -> None:
+    async def _do_search(self, query: str, use_pubmed: bool, use_arxiv: bool) -> None:
         status = self.query_one("#status", Label)
         table = self.query_one("#results_table", DataTable)
         progress = self.query_one("#search_progress", ProgressBar)
@@ -1183,24 +1193,29 @@ class ScicherApp(App):
         progress.update(total=None, progress=0)
 
         fetcher = self.get_fetcher()
-        try:
-            pmids = await self.run_in_thread(lambda: fetcher.pmids_for_query(query, retmax=50))
-        except Exception as exc:  # noqa: BLE001 - surface any NCBI/network error to the user
-            pmids = []
-            pubmed_note = f"PubMed search failed: {exc}"
+        pmids: list[str] = []
+        pubmed_note = ""
+        if use_pubmed:
+            try:
+                pmids = await self.run_in_thread(lambda: fetcher.pmids_for_query(query, retmax=50))
+            except Exception as exc:  # noqa: BLE001 - surface any NCBI/network error to the user
+                pubmed_note = f"PubMed search failed: {exc}"
         else:
-            pubmed_note = ""
+            pubmed_note = "PubMed disabled"
 
-        arxiv_query = build_arxiv_query(self.groups)
         arxiv_records: list[ArxivRecord] = []
         arxiv_note = ""
-        if arxiv_query:
-            try:
-                arxiv_records = await self.run_in_thread(lambda: fetch_arxiv(arxiv_query))
-            except Exception as exc:  # noqa: BLE001 - arXiv is best-effort, never block PubMed results
-                arxiv_note = f"arXiv search failed: {exc}"
+        if use_arxiv:
+            arxiv_query = build_arxiv_query(self.groups)
+            if arxiv_query:
+                try:
+                    arxiv_records = await self.run_in_thread(lambda: fetch_arxiv(arxiv_query))
+                except Exception as exc:  # noqa: BLE001 - arXiv is best-effort, never block PubMed results
+                    arxiv_note = f"arXiv search failed: {exc}"
+            else:
+                arxiv_note = "arXiv skipped (no compatible terms, e.g. MeSH-only query)"
         else:
-            arxiv_note = "arXiv skipped (no compatible terms, e.g. MeSH-only query)"
+            arxiv_note = "arXiv disabled"
 
         total = len(pmids) + len(arxiv_records)
         self._last_result_keys = [f"pubmed:{pmid}" for pmid in pmids] + [
@@ -1213,11 +1228,10 @@ class ScicherApp(App):
         except OSError:
             pass  # non-fatal: searching should still work even if the log can't be written
 
-        status.update(f"Found {len(pmids)} PubMed + {len(arxiv_records)} arXiv result(s)...")
+        notes = " ".join(f"[{note}]" for note in (pubmed_note, arxiv_note) if note)
+        status.update(f"Found {len(pmids)} PubMed + {len(arxiv_records)} arXiv result(s). {notes}")
         if total == 0:
             progress.display = False
-            if pubmed_note:
-                status.update(pubmed_note)
             return
 
         progress.update(total=total, progress=0)
