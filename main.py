@@ -528,13 +528,27 @@ ResultT = TypeVar("ResultT")
 
 
 class EscDismissScreen(ModalScreen[ResultT]):
-    """A ModalScreen that can also be closed with Escape, dismissing with None
-    the same way its Cancel button does."""
+    """A ModalScreen that can also be closed with Escape (dismissing with None the same way
+    its Cancel button does) and navigated with arrow keys, not just Tab/Shift+Tab. Widgets
+    that already use arrow keys themselves (Input, Select, SelectionList) see them first and
+    keep their own behavior; this only kicks in for widgets like Button that don't."""
 
-    BINDINGS: ClassVar = [("escape", "dismiss_none", "Cancel")]
+    BINDINGS: ClassVar = [
+        ("escape", "dismiss_none", "Cancel"),
+        ("left", "focus_previous", "Previous"),
+        ("up", "focus_previous", "Previous"),
+        ("right", "focus_next", "Next"),
+        ("down", "focus_next", "Next"),
+    ]
 
     def action_dismiss_none(self) -> None:
         self.dismiss(None)
+
+    def action_focus_previous(self) -> None:
+        self.focus_previous()
+
+    def action_focus_next(self) -> None:
+        self.focus_next()
 
 
 class AddTermScreen(EscDismissScreen[Term | None]):
