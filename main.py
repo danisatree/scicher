@@ -903,10 +903,48 @@ def resolve_access_for(key: str, article: Any) -> OpenAccessInfo:
     return resolve_open_access(article.pmc, article.doi)
 
 
+def fetch_pmc_fulltext(pmcid: str) -> str:
+    """Fetch a PMC Open Access article's full text via efetch and flatten its JATS XML body
+    to plain text. Returns an explanatory message instead of raising if the article isn't in
+    the OA subset (most PMC entries aren't) or the request otherwise fails."""
+    import xml.etree.ElementTree as ET
+
+    params = {"db": "pmc", "id": pmcid, "retmode": "xml"}
+    api_key = os.environ.get("NCBI_API_KEY")
+    if api_key:
+        params["api_key"] = api_key
+    try:
+        resp = requests.get(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi", params=params, timeout=20
+        )
+        resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+    except Exception as exc:  # noqa: BLE001 - surface as a readable message, not a traceback
+        return f"Could not fetch full text: {exc}"
+
+    body = root.find(".//body")
+    if body is None:
+        return (
+            "Full text is not available via the PMC API for this article "
+            "(it may not be in the PMC Open Access subset)."
+        )
+
+    paragraphs: list[str] = []
+    for el in body.iter():
+        text = "".join(el.itertext()).strip()
+        if not text:
+            continue
+        if el.tag == "title":
+            paragraphs.append(f"\n{text.upper()}\n")
+        elif el.tag == "p":
+            paragraphs.append(text)
+    return "\n\n".join(paragraphs) or "(full text retrieved but contained no readable paragraphs)"
+
+
 class ArticleActionsScreen(EscDismissScreen[str | None]):
-    """Modal offering actions for the selected article: open links, copy details, or remove it
-    from the results table. Dismisses with "remove" if the caller should drop the article,
-    otherwise None."""
+    """Modal offering actions for the selected article: open links, copy details, read the full
+    text, or remove it from the results table. Dismisses with "remove" or "fulltext" to tell the
+    caller what to do next, otherwise None."""
 
     def __init__(
         self,
@@ -914,12 +952,14 @@ class ArticleActionsScreen(EscDismissScreen[str | None]):
         article: Any,
         access: OpenAccessInfo,
         id_label: str = "PMID",
+        is_arxiv: bool = False,
     ) -> None:
         super().__init__()
         self._display_id = display_id
         self._article = article
         self._access = access
         self._id_label = id_label
+        self._is_arxiv = is_arxiv
 
     def compose(self) -> ComposeResult:
         article = self._article
@@ -935,7 +975,19 @@ class ArticleActionsScreen(EscDismissScreen[str | None]):
                     id="open_free",
                     disabled=not (self._access.is_free and self._access.url),
                 )
-                yield Button("Try Sci-Hub (DOI)", id="open_scihub", disabled=not article.doi)
+                yield Button(
+                    "Try Sci-Hub (DOI)",
+                    id="open_scihub",
+                    disabled=self._is_arxiv or not article.doi,
+                    tooltip="Not applicable to arXiv preprints — they're already open access."
+                    if self._is_arxiv
+                    else None,
+                )
+                yield Button(
+                    "Read full text (PMC only)",
+                    id="read_fulltext",
+                    disabled=not article.pmc,
+                )
             with Horizontal():
                 yield Button("Copy citation", id="copy_citation")
                 yield Button("Copy DOI", id="copy_doi", disabled=not article.doi)
@@ -952,6 +1004,9 @@ class ArticleActionsScreen(EscDismissScreen[str | None]):
             webbrowser.open(self._access.url)
         elif button_id == "open_scihub" and article.doi:
             webbrowser.open(f"{SCI_HUB_BASE_URL}{article.doi}")
+        elif button_id == "read_fulltext" and article.pmc:
+            self.dismiss("fulltext")
+            return
         elif button_id == "copy_citation":
             self.app.copy_to_clipboard(format_citation(article))
             self.notify("Citation copied to clipboard.")
@@ -967,6 +1022,26 @@ class ArticleActionsScreen(EscDismissScreen[str | None]):
         elif button_id == "remove":
             self.dismiss("remove")
             return
+        self.dismiss(None)
+
+
+class FullTextScreen(EscDismissScreen[None]):
+    """Modal showing a PMC Open Access article's full text as plain text."""
+
+    def __init__(self, title: str, text: str) -> None:
+        super().__init__()
+        self._title = title
+        self._text = text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="fulltext_dialog"):
+            yield Label(self._title, markup=False, id="fulltext_title")
+            with VerticalScroll(id="fulltext_scroll"):
+                yield Static(self._text, markup=False, id="fulltext_text")
+            with Horizontal():
+                yield Button("Close", variant="primary", id="close")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(None)
 
 
@@ -1488,9 +1563,10 @@ class ScicherApp(App):
             return
         access = await self.run_in_thread(lambda: resolve_access_for(key, article))
         display_id = key.split(":", 1)[1]
-        id_label = "arXiv ID" if key.startswith("arxiv:") else "PMID"
+        is_arxiv = key.startswith("arxiv:")
+        id_label = "arXiv ID" if is_arxiv else "PMID"
         result = await self.push_screen_wait(
-            ArticleActionsScreen(display_id, article, access, id_label)
+            ArticleActionsScreen(display_id, article, access, id_label, is_arxiv)
         )
         if result == "remove":
             self.query_one("#results_table", DataTable).remove_row(key)
@@ -1498,6 +1574,12 @@ class ScicherApp(App):
             if key in self._last_result_keys:
                 self._last_result_keys.remove(key)
             self.query_one("#status", Label).update(f"Removed {id_label} {display_id} from results.")
+        elif result == "fulltext":
+            status = self.query_one("#status", Label)
+            status.update(f"Fetching full text for PMC{article.pmc}...")
+            text = await self.run_in_thread(lambda: fetch_pmc_fulltext(article.pmc))
+            status.update(f"{id_label} {display_id} ready.")
+            self.push_screen(FullTextScreen(article.title or "(no title)", text))
 
     async def _show_detail(self, key: str) -> None:
         detail = self.query_one("#detail_text", Static)

@@ -211,7 +211,7 @@ DataTable > .datatable--cursor {
 /* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen) */
 
 AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen,
-SettingsScreen {
+SettingsScreen, FullTextScreen {
     align: center middle;
 }
 
@@ -222,7 +222,7 @@ SettingsScreen {
    box it needs — the palette's own container has dock/overlay children that don't
    size correctly for a border, so we skip it and border the list directly. */
 #dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog,
-CommandList {
+#fulltext_dialog, CommandList {
     height: auto;
     max-height: 60vh;
     padding: 1 2;
@@ -358,4 +358,26 @@ CommandPalette #--input {
     margin-top: 1;
     background: $surface;
     border: round $primary 30%;
+}
+
+#fulltext_dialog {
+    width: 140;
+    max-height: 90%;
+}
+
+#fulltext_title {
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#fulltext_scroll {
+    height: 30;
+    background: $surface;
+    border: round $primary 30%;
+    padding: 0 1;
+}
+
+#fulltext_dialog > Horizontal {
+    height: auto;
+    margin-top: 1;
 }
