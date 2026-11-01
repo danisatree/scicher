@@ -276,7 +276,7 @@ SettingsScreen {
 }
 
 #filters_dialog {
-    width: 74;
+    width: 120;
     height: auto;
     max-height: 90%;
     padding: 1 2;
@@ -289,15 +289,29 @@ SettingsScreen {
     margin-top: 1;
 }
 
-#filters_fields {
+#filters_dialog > Horizontal {
     height: auto;
-    max-height: 18;
+}
+
+#filters_col_left {
+    width: 1fr;
+    height: auto;
+    margin-right: 2;
+}
+
+#filters_col_right {
+    width: 1fr;
+    height: auto;
 }
 
 .filter_hint {
     color: $secondary;
     text-style: italic;
     margin-top: 1;
+}
+
+#year_row {
+    height: auto;
 }
 
 #year_row Input {
@@ -310,7 +324,7 @@ SettingsScreen {
 }
 
 #pub_types {
-    height: 10;
+    height: 12;
     border: round $primary 30%;
 }
 
