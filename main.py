@@ -16,6 +16,7 @@ from typing import Any, ClassVar, TypeVar
 
 import requests
 from textual.app import App, ComposeResult, SystemCommand
+from textual.binding import Binding
 from textual.command import DiscoveryHit
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
@@ -1112,6 +1113,20 @@ class OrderedSystemCommandsProvider(SystemCommandsProvider):
                 yield DiscoveryHit(name, callback, help=help_text)
 
 
+class ResultsTable(DataTable):
+    """DataTable that opens the article actions menu with Space instead of Enter. Textual
+    merges a subclass's BINDINGS with its parent's rather than replacing them, so Enter has
+    to be explicitly re-bound to a no-op here to actually stop triggering the old behavior."""
+
+    BINDINGS: ClassVar = [
+        Binding("space", "select_cursor", "Actions", show=False),
+        Binding("enter", "noop", "", show=False),
+    ]
+
+    def action_noop(self) -> None:
+        pass
+
+
 class ScicherApp(App):
     """TUI for building PubMed advanced-search queries and browsing results."""
 
@@ -1156,7 +1171,7 @@ class ScicherApp(App):
         yield Header()
         with Vertical(id="main_area"):
             with Vertical(id="results_section"):
-                yield DataTable(id="results_table")
+                yield ResultsTable(id="results_table")
             with Horizontal(id="bottom_row"):
                 with Vertical(id="left_col"):
                     with Vertical(id="query_panel"):
