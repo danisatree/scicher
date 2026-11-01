@@ -1,4 +1,4 @@
-/* Scicher — cyberpunk HUD stylesheet for the main app and its modal dialogs. */
+/* Scicher — stylesheet for the main app and its modal dialogs (science-dark / science-light themes). */
 
 /* Keep scrolling (keyboard/wheel) working everywhere, just hide the visible bar. */
 * {

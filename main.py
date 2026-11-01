@@ -34,7 +34,7 @@ from textual.widgets import (
     Static,
 )
 
-from theme import CYBERLAB_THEME
+from theme import SCIENCE_DARK_THEME, SCIENCE_LIGHT_THEME
 
 FIELD_CHOICES = [
     ("Title/Abstract", "title/abstract"),
@@ -568,11 +568,12 @@ SETTINGS_PATH = Path(__file__).parent / "scicher_settings.json"
 
 @dataclass
 class Settings:
-    """User-configurable API credentials, stored locally and never committed."""
+    """User-configurable credentials and preferences, stored locally and never committed."""
 
     ncbi_api_key: str = ""
     unpaywall_email: str = ""
     scihub_mirror: str = ""
+    theme: str = "science-dark"
 
 
 def load_settings() -> Settings:
@@ -586,6 +587,7 @@ def load_settings() -> Settings:
         ncbi_api_key=data.get("ncbi_api_key", ""),
         unpaywall_email=data.get("unpaywall_email", ""),
         scihub_mirror=data.get("scihub_mirror", ""),
+        theme=data.get("theme", "science-dark"),
     )
 
 
@@ -777,6 +779,7 @@ class ScicherApp(App):
         ("l", "log_query", "Log query"),
         ("o", "load_query", "Load query"),
         ("p", "edit_settings", "Settings"),
+        ("t", "toggle_theme", "Toggle theme"),
         ("q", "quit", "Quit"),
     ]
 
@@ -817,8 +820,9 @@ class ScicherApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.register_theme(CYBERLAB_THEME)
-        self.theme = "cyberlab"
+        self.register_theme(SCIENCE_DARK_THEME)
+        self.register_theme(SCIENCE_LIGHT_THEME)
+        self.theme = self.settings.theme
 
         query_panel = self.query_one("#query_panel")
         query_panel.border_title = "1. QUERY TERMS"
@@ -995,6 +999,15 @@ class ScicherApp(App):
             self.query_one("#status", Label).update("Settings saved.")
 
         self.push_screen(SettingsScreen(self.settings), handle_result)
+
+    def action_toggle_theme(self) -> None:
+        new_theme = "science-light" if self.theme == "science-dark" else "science-dark"
+        self.theme = new_theme
+        self.settings = replace(self.settings, theme=new_theme)
+        try:
+            save_settings(self.settings)
+        except OSError:
+            pass  # theme toggle should never fail the UI even if the save doesn't stick
 
     def action_run_search(self) -> None:
         query = self.current_query()
