@@ -1,44 +1,41 @@
-"""Scicher's themes — both built from the same "Starfield" 6-color palette
-(D5DAD7 Silver Greene / D3A54F Golden Freestar / D35F3F Alien Aurora /
-B72B3C Crimson Fleet / 334A73 Blue Constellation / 1F2C41 Deep Vanguard).
-No green in the source palette, so `success` reuses another color rather
-than reaching for an off-palette one; `warning`/`error` map naturally onto
-the gold/crimson tones, which is a rare case where the palette's own
-colors already carry the right semantics. The dark theme's panel/boost
-(#111824) is a darker derived shade of Deep Vanguard rather than one of
-the 6 named colors — panels need to read as darker than the background
-there, and nothing in the source palette was dark enough for that."""
+"""Scicher's themes — Tokyo Night. The dark variant is copied verbatim from
+Textual's own built-in "tokyo-night" theme (textual.theme.BUILTIN_THEMES), so
+its colors are exact, not approximated. There's no official Tokyo Night light
+variant shipped anywhere Scicher depends on, so science-light is this
+project's own light-mode adaptation of the same accent colors (same
+primary/secondary/accent/warning/error/success hexes, inverted neutrals) —
+not a claim that it matches any particular "Tokyo Day" theme byte-for-byte."""
 
 from textual.theme import Theme
 
 SCIENCE_DARK_THEME = Theme(
     name="science-dark",
-    primary="#D3A54F",
-    secondary="#D35F3F",
-    accent="#B72B3C",
-    warning="#D3A54F",
-    error="#B72B3C",
-    success="#D5DAD7",
-    foreground="#D5DAD7",
-    background="#1F2C41",
-    surface="#1F2C41",
-    panel="#111824",
-    boost="#111824",
+    primary="#BB9AF7",
+    secondary="#7AA2F7",
+    accent="#FF9E64",
+    warning="#E0AF68",
+    error="#F7768E",
+    success="#9ECE6A",
+    foreground="#A9B1D6",
+    background="#1A1B26",
+    surface="#24283B",
+    panel="#414868",
+    boost="#414868",
     dark=True,
 )
 
 SCIENCE_LIGHT_THEME = Theme(
     name="science-light",
-    primary="#334A73",
-    secondary="#1F2C41",
-    accent="#B72B3C",
-    warning="#D3A54F",
-    error="#B72B3C",
-    success="#D35F3F",
-    foreground="#1F2C41",
-    background="#D5DAD7",
-    surface="#D5DAD7",
-    panel="#D5DAD7",
-    boost="#D5DAD7",
+    primary="#BB9AF7",
+    secondary="#7AA2F7",
+    accent="#FF9E64",
+    warning="#E0AF68",
+    error="#F7768E",
+    success="#9ECE6A",
+    foreground="#1A1B26",
+    background="#E1E2E7",
+    surface="#FFFFFF",
+    panel="#D5D6DB",
+    boost="#D5D6DB",
     dark=False,
 )
