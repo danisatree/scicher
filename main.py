@@ -535,6 +535,25 @@ def read_query_log(path: str) -> list[dict[str, str]]:
     return rows
 
 
+WATCH_SNAPSHOTS_PATH = Path(__file__).parent / "scicher_watch_snapshots.json"
+
+
+def load_watch_snapshots() -> dict[str, list[str]]:
+    """Latest result-key snapshot per watched query, keyed by the exact query string.
+    Only the most recent run is kept per query (not full history), so this stays small."""
+    try:
+        return json.loads(WATCH_SNAPSHOTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_watch_snapshot(query: str, keys: list[str]) -> None:
+    snapshots = load_watch_snapshots()
+    snapshots[query] = keys
+    with contextlib.suppress(OSError):
+        WATCH_SNAPSHOTS_PATH.write_text(json.dumps(snapshots, indent=2), encoding="utf-8")
+
+
 ResultT = TypeVar("ResultT")
 
 
@@ -761,8 +780,10 @@ class FiltersScreen(EscDismissScreen[Filters | None]):
         )
 
 
-class LoadQueryScreen(EscDismissScreen[str | None]):
-    """Modal dialog for picking a previously logged query from a CSV file."""
+class LoadQueryScreen(EscDismissScreen[tuple[str, str] | None]):
+    """Modal dialog for picking a previously logged query from a CSV file. Dismisses with
+    ("load", query) for a plain reload, or ("watch", query) to re-run it and report what's
+    new since the last run of that exact query (see WATCH_SNAPSHOTS_PATH)."""
 
     def __init__(self, default_path: str) -> None:
         super().__init__()
@@ -777,6 +798,11 @@ class LoadQueryScreen(EscDismissScreen[str | None]):
             yield ListView(id="log_entries")
             with Horizontal():
                 yield Button("Use selected", variant="primary", id="use")
+                yield Button(
+                    "Re-run & diff",
+                    id="watch",
+                    tooltip="Re-run this query now and report what's new since its last run.",
+                )
                 yield Button("Cancel", id="cancel")
 
     def on_mount(self) -> None:
@@ -798,15 +824,17 @@ class LoadQueryScreen(EscDismissScreen[str | None]):
             label_text = f"[{timestamp}] ({count} results) {query}"
             list_view.append(ListItem(Label(label_text, markup=False), name=query))
 
-    def _dismiss_selected(self) -> None:
+    def _dismiss_selected(self, action: str) -> None:
         item = self.query_one("#log_entries", ListView).highlighted_child
-        self.dismiss(item.name if item and item.name else None)
+        self.dismiss((action, item.name) if item and item.name else None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "load":
             self._load_entries()
         elif event.button.id == "use":
-            self._dismiss_selected()
+            self._dismiss_selected("load")
+        elif event.button.id == "watch":
+            self._dismiss_selected("watch")
         else:
             self.dismiss(None)
 
@@ -814,7 +842,7 @@ class LoadQueryScreen(EscDismissScreen[str | None]):
         self._load_entries()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        self.dismiss(event.item.name if event.item.name else None)
+        self.dismiss(("load", event.item.name) if event.item.name else None)
 
 
 SCI_HUB_BASE_URL = "https://sci-hub.st/"
@@ -1424,16 +1452,41 @@ class ScicherApp(App):
         self.push_screen(FiltersScreen(self.filters), handle_result)
 
     def action_load_query(self) -> None:
-        def handle_result(query: str | None) -> None:
-            if not query:
+        def handle_result(result: tuple[str, str] | None) -> None:
+            if result is None:
                 return
+            action, query = result
             groups, filters = parse_query(query)
             self.groups = groups or [Group()]
             self.filters = filters
             self.refresh_groups_list()
-            self.query_one("#status", Label).update(f"Loaded saved query: {query}")
+            if action == "watch":
+                self.run_worker(self._watch_query(query), group="search", exclusive=True)
+            else:
+                self.query_one("#status", Label).update(f"Loaded saved query: {query}")
 
         self.push_screen(LoadQueryScreen(DEFAULT_QUERY_LOG_PATH), handle_result)
+
+    async def _watch_query(self, query: str) -> None:
+        """Re-runs a saved query and reports what's new since its last watched run,
+        using the latest result-key snapshot for this exact query string."""
+        previous = set(load_watch_snapshots().get(query, []))
+        use_pubmed = self.query_one("#source_pubmed", Checkbox).value
+        use_arxiv = self.query_one("#source_arxiv", Checkbox).value
+        self.query_one("#status", Label).update(f"Watch: re-running {query} ...")
+        await self._do_search(query, use_pubmed, use_arxiv)
+        current = set(self._last_result_keys)
+        save_watch_snapshot(query, sorted(current))
+        status = self.query_one("#status", Label)
+        if not previous:
+            status.update(
+                f"Watch: first run for this query — {len(current)} result(s) saved as baseline."
+            )
+        else:
+            new_count = len(current - previous)
+            status.update(
+                f"Watch: {new_count} new since last run ({len(current)} total for: {query})."
+            )
 
     def action_undo_remove(self) -> None:
         status = self.query_one("#status", Label)
