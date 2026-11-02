@@ -1,20 +1,24 @@
-"""Scicher's themes — a clean, academic/lab-notebook palette in light and dark variants."""
+"""Scicher's themes — a clean, academic/lab-notebook light theme, and a vivid
+purple/magenta dark theme. The dark palette's 6 colors (180B41/3C2E7A/DDDDFE/
+93093D/FF6798/E80E49) are reused across more than 11 Theme roles by design —
+there's no green in it, so `success` intentionally uses the light lavender
+(DDDDFE) rather than an off-palette color."""
 
 from textual.theme import Theme
 
 SCIENCE_DARK_THEME = Theme(
     name="science-dark",
-    primary="#5ea8c7",
-    secondary="#7c93b3",
-    accent="#d9a441",
-    warning="#e0b64f",
-    error="#c75c5c",
-    success="#6fae7f",
-    foreground="#e8ecf1",
-    background="#10141c",
-    surface="#171c26",
-    panel="#1d2330",
-    boost="#242b3a",
+    primary="#FF6798",
+    secondary="#DDDDFE",
+    accent="#E80E49",
+    warning="#E80E49",
+    error="#93093D",
+    success="#DDDDFE",
+    foreground="#DDDDFE",
+    background="#180B41",
+    surface="#180B41",
+    panel="#3C2E7A",
+    boost="#3C2E7A",
     dark=True,
 )
 
