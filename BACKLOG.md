@@ -62,19 +62,6 @@ function, not a new data path.
   arXiv preprints -> `@misc` (or `@article` with an `eprint` field, per
   BibTeX convention) — don't just hardcode `@article` for everything.
 
-## Saved queries as a "watch" (diff since last run)
-
-The query log (`l`/`o`) already stores query text + result count per
-run, but not which specific articles matched. Extend it to snapshot the
-full ID list per run (PMIDs + arXiv ids), so re-running a saved query can
-report "N new since last run" instead of just the new total count.
-
-- Storage: probably only keep the latest ID snapshot per saved query
-  (not full history) to avoid the log growing unbounded.
-- UI: an explicit "re-run and diff" action from `LoadQueryScreen`, separate
-  from a plain reload, since a diff needs the previous snapshot kept around
-  specifically for comparison rather than just restoring the query text.
-
 ## Flag retracted articles
 
 A risk signal worth surfacing before someone cites a paper: Crossref's
