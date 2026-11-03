@@ -243,7 +243,7 @@ DataTable > .datatable--cursor {
 /* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen) */
 
 AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen,
-SettingsScreen, FullTextScreen {
+SettingsScreen, FullTextScreen, DoiLookupScreen {
     align: center middle;
 }
 
@@ -254,7 +254,7 @@ SettingsScreen, FullTextScreen {
    box it needs — the palette's own container has dock/overlay children that don't
    size correctly for a border, so we skip it and border the list directly. */
 #dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog,
-#fulltext_dialog, CommandList {
+#fulltext_dialog, #doi_dialog, CommandList {
     height: auto;
     max-height: 60vh;
     padding: 1 2;
@@ -410,6 +410,34 @@ CommandPalette #--input {
 }
 
 #fulltext_dialog > Horizontal {
+    height: auto;
+    margin-top: 1;
+}
+
+#doi_dialog {
+    width: 140;
+    max-height: 90%;
+}
+
+#doi_input_row {
+    height: auto;
+    margin-top: 1;
+}
+
+#doi_input_row Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#doi_scroll {
+    height: 24;
+    margin-top: 1;
+    background: $surface;
+    border: round $primary 30%;
+    padding: 0 1;
+}
+
+#doi_dialog > Horizontal:last-child {
     height: auto;
     margin-top: 1;
 }

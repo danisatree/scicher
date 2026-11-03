@@ -995,6 +995,131 @@ def fetch_pmc_fulltext(pmcid: str) -> str:
     return "\n\n".join(paragraphs) or "(full text retrieved but contained no readable paragraphs)"
 
 
+@dataclass
+class DoiRecord:
+    """Exposes the same attribute names ArticleActionsScreen/format_citation read off a
+    metapub PubMedArticle or ArxivRecord, so a Crossref-only lookup (§5 DOI Lookup) flows
+    through the same actions modal/clipboard code unchanged."""
+
+    doi: str
+    title: str = ""
+    authors: list[str] = field(default_factory=list)
+    journal: str = ""
+    year: str = ""
+    volume: str | None = None
+    issue: str | None = None
+    pages: str | None = None
+    pmc: str | None = None
+    issn: str | None = None
+    publisher: str = ""
+    publication_types: list[str] = field(default_factory=list)
+    mesh: list[str] = field(default_factory=list)
+    subjects: list[str] = field(default_factory=list)
+    citation_count: int | None = None
+    retracted: bool = False
+    abstract: str = ""
+    url: str = ""
+
+    @property
+    def keywords(self) -> list[str]:
+        return self.subjects
+
+
+def fetch_doi_info(doi: str) -> dict[str, Any] | None:
+    """Raw Crossref /works/{doi} metadata, or None if the DOI isn't registered there."""
+    try:
+        resp = requests.get(
+            f"https://api.crossref.org/works/{doi}", params={"mailto": UNPAYWALL_EMAIL}, timeout=15
+        )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json().get("message")
+    except Exception:  # noqa: BLE001 - surfaced as "no record found" by the caller
+        return None
+
+
+def fetch_pmcid_for_doi(doi: str) -> str | None:
+    """PMC id for a DOI via NCBI's ID Converter, or None if it's not in PMC."""
+    try:
+        resp = requests.get(
+            "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/",
+            params={"ids": doi, "format": "json", "email": UNPAYWALL_EMAIL, "tool": "scicher"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        records = resp.json().get("records", [])
+        if records and "pmcid" in records[0]:
+            pmcid = records[0]["pmcid"]
+            return pmcid.removeprefix("PMC") if pmcid.startswith("PMC") else pmcid
+    except Exception:  # noqa: BLE001 - PMC lookup is best-effort, never block the DOI lookup
+        pass
+    return None
+
+
+def build_doi_record(data: dict[str, Any], pmc: str | None) -> DoiRecord:
+    """Flattens a raw Crossref /works/{doi} response into a DoiRecord."""
+    authors = []
+    for author in data.get("author", []) or []:
+        name = f"{author.get('given', '')} {author.get('family', '')}".strip()
+        if name:
+            authors.append(name)
+    date_parts = (
+        (data.get("published-print") or data.get("published-online") or data.get("published") or {}).get(
+            "date-parts"
+        )
+        or [[]]
+    )[0]
+    abstract = re.sub(r"<[^>]+>", "", data.get("abstract", "") or "").strip()
+    doi = data.get("DOI", "")
+    retracted = any(u.get("type") == "retraction" for u in (data.get("update-to") or []))
+    return DoiRecord(
+        doi=doi,
+        title=(data.get("title") or [""])[0],
+        authors=authors,
+        journal=(data.get("container-title") or [""])[0],
+        year=str(date_parts[0]) if date_parts else "",
+        volume=data.get("volume"),
+        issue=data.get("issue"),
+        pages=data.get("page"),
+        pmc=pmc,
+        issn=(data.get("ISSN") or [None])[0],
+        publisher=data.get("publisher", ""),
+        publication_types=[data["type"]] if data.get("type") else [],
+        subjects=data.get("subject") or [],
+        citation_count=data.get("is-referenced-by-count"),
+        retracted=retracted,
+        abstract=abstract,
+        url=data.get("URL") or (f"https://doi.org/{doi}" if doi else ""),
+    )
+
+
+def render_doi_detail(record: DoiRecord, access: OpenAccessInfo) -> str:
+    lines = []
+    if record.retracted:
+        lines.append("*** RETRACTED — verify before citing! ***\n")
+    lines.append(f"DOI: {record.doi}")
+    lines.append(f"Title: {record.title or '(no title)'}")
+    lines.append(f"Authors: {', '.join(record.authors) or '(none listed)'}")
+    lines.append(f"Journal: {record.journal or '?'} ({record.year or '?'})")
+    lines.append(f"Publisher: {record.publisher or '-'}")
+    lines.append(
+        f"Volume/Issue/Pages: {record.volume or '?'}/{record.issue or '?'}/{record.pages or '?'}"
+    )
+    lines.append(f"Type: {', '.join(record.publication_types) or '-'}")
+    lines.append(f"PMC: {record.pmc or '-'}")
+    lines.append(f"Access: {access.source}")
+    count = record.citation_count
+    lines.append(f"Cited by (Crossref): {count if count is not None else '?'}")
+    if record.subjects:
+        lines.append(f"Subjects: {', '.join(record.subjects)}")
+    lines.append(f"URL: {record.url}")
+    lines.append("")
+    lines.append("Abstract:")
+    lines.append(record.abstract or "(no abstract available via Crossref)")
+    return "\n".join(lines)
+
+
 class ArticleActionsScreen(EscDismissScreen[str | None]):
     """Modal offering actions for the selected article: open links, copy details, read the full
     text, or remove it from the results table. Dismisses with "remove" or "fulltext" to tell the
@@ -1099,6 +1224,86 @@ class FullTextScreen(EscDismissScreen[None]):
         self.dismiss(None)
 
 
+class DoiLookupScreen(EscDismissScreen[None]):
+    """§5 — look up a DOI directly (independent of §1-4's search results) and show
+    everything Crossref/PMC have on it, with the same open/copy/full-text actions as a
+    search result via a nested ArticleActionsScreen."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._record: DoiRecord | None = None
+        self._access: OpenAccessInfo | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="doi_dialog"):
+            yield Label("DOI Lookup", markup=False)
+            with Horizontal(id="doi_input_row"):
+                yield Input(placeholder="10.xxxx/xxxxxxx", id="doi_input")
+                yield Button("Look up", variant="primary", id="lookup")
+            with VerticalScroll(id="doi_scroll"):
+                yield Static(
+                    "Enter a DOI above and press Look up (or Enter).",
+                    markup=False,
+                    id="doi_text",
+                )
+            with Horizontal():
+                yield Button("Actions...", id="actions", disabled=True)
+                yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        self.query_one("#doi_input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "doi_input":
+            self._do_lookup()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "lookup":
+            self._do_lookup()
+        elif event.button.id == "actions":
+            self.run_worker(self._show_actions(), exclusive=True)
+        else:
+            self.dismiss(None)
+
+    def _do_lookup(self) -> None:
+        doi = self.query_one("#doi_input", Input).value.strip()
+        if not doi:
+            return
+        self.run_worker(self._fetch(doi), exclusive=True)
+
+    async def _fetch(self, doi: str) -> None:
+        text = self.query_one("#doi_text", Static)
+        actions_button = self.query_one("#actions", Button)
+        actions_button.disabled = True
+        self._record = None
+        self._access = None
+        text.update(f"Looking up {doi} ...")
+
+        data = await asyncio.to_thread(fetch_doi_info, doi)
+        if data is None:
+            text.update(f"No Crossref record found for DOI: {doi}")
+            return
+
+        pmc = await asyncio.to_thread(fetch_pmcid_for_doi, doi)
+        record = build_doi_record(data, pmc)
+        access = await asyncio.to_thread(resolve_open_access, pmc, record.doi)
+        self._record = record
+        self._access = access
+        text.update(render_doi_detail(record, access))
+        actions_button.disabled = False
+
+    async def _show_actions(self) -> None:
+        if self._record is None or self._access is None:
+            return
+        result = await self.app.push_screen_wait(
+            ArticleActionsScreen(self._record.doi, self._record, self._access, "DOI")
+        )
+        if result == "fulltext" and self._record.pmc:
+            text = await asyncio.to_thread(fetch_pmc_fulltext, self._record.pmc)
+            self.app.push_screen(FullTextScreen(self._record.title or "(no title)", text))
+        # "remove" has nothing to remove here (no results table in this mode) — ignored.
+
+
 class SettingsScreen(EscDismissScreen[Settings | None]):
     """Modal for configuring the NCBI API key and other service settings (saved locally)."""
 
@@ -1192,6 +1397,7 @@ class ScicherApp(App):
         ("2", "focus_query_preview", "Query"),
         ("3", "focus_results", "Results"),
         ("4", "focus_detail", "Detail"),
+        ("5", "doi_lookup", "DOI Lookup"),
         ("y", "sort_by_year", "Sort by year"),
         ("a", "add_term", "Add term"),
         ("n", "new_group", "New group (AND)"),
@@ -1341,6 +1547,9 @@ class ScicherApp(App):
 
     def action_focus_detail(self) -> None:
         self.query_one("#detail_scroll", VerticalScroll).focus()
+
+    def action_doi_lookup(self) -> None:
+        self.push_screen(DoiLookupScreen())
 
     NUMERIC_SORT_COLUMNS: ClassVar = {"pmid", "year"}
 
