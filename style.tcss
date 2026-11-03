@@ -416,6 +416,7 @@ CommandPalette #--input {
 
 #doi_dialog {
     width: 140;
+    max-width: 95%;
     max-height: 90%;
 }
 
@@ -430,7 +431,7 @@ CommandPalette #--input {
 }
 
 #doi_scroll {
-    height: 24;
+    height: 14;
     margin-top: 1;
     background: $surface;
     border: round $primary 30%;
