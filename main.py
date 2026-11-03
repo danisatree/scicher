@@ -1120,6 +1120,32 @@ def render_doi_detail(record: DoiRecord, access: OpenAccessInfo) -> str:
     return "\n".join(lines)
 
 
+def apply_article_action(screen: Screen, article: Any, access: OpenAccessInfo, action: str) -> bool:
+    """Shared handler for the open/copy article-action buttons, used by both
+    ArticleActionsScreen and DoiLookupScreen so the two don't drift apart. Performs the
+    side effect (opening a browser tab, copying to the clipboard) directly; returns True
+    for "read_fulltext" since fetching/showing the text needs an async context the caller
+    already has (a running worker), which this synchronous function doesn't."""
+    if action == "open_pubmed" and article.url:
+        webbrowser.open(article.url)
+    elif action == "open_free" and access.url:
+        webbrowser.open(access.url)
+    elif action == "open_scihub" and article.doi:
+        webbrowser.open(f"{SCI_HUB_BASE_URL}{article.doi}")
+    elif action == "read_fulltext" and article.pmc:
+        return True
+    elif action == "copy_citation":
+        screen.app.copy_to_clipboard(format_citation(article))
+        screen.notify("Citation copied to clipboard.")
+    elif action == "copy_doi" and article.doi:
+        screen.app.copy_to_clipboard(article.doi)
+        screen.notify("DOI copied to clipboard.")
+    elif action == "copy_url" and article.url:
+        screen.app.copy_to_clipboard(article.url)
+        screen.notify("URL copied to clipboard.")
+    return False
+
+
 class ArticleActionsScreen(EscDismissScreen[str | None]):
     """Modal offering actions for the selected article: open links, copy details, read the full
     text, or remove it from the results table. Dismisses with "remove" or "fulltext" to tell the
@@ -1175,33 +1201,19 @@ class ArticleActionsScreen(EscDismissScreen[str | None]):
                 yield Button("Cancel", id="cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        article = self._article
         button_id = event.button.id
-        if button_id == "open_pubmed" and article.url:
-            webbrowser.open(article.url)
-        elif button_id == "open_free" and self._access.url:
-            webbrowser.open(self._access.url)
-        elif button_id == "open_scihub" and article.doi:
-            webbrowser.open(f"{SCI_HUB_BASE_URL}{article.doi}")
-        elif button_id == "read_fulltext" and article.pmc:
-            self.dismiss("fulltext")
-            return
-        elif button_id == "copy_citation":
-            self.app.copy_to_clipboard(format_citation(article))
-            self.notify("Citation copied to clipboard.")
-            return
-        elif button_id == "copy_doi" and article.doi:
-            self.app.copy_to_clipboard(article.doi)
-            self.notify("DOI copied to clipboard.")
-            return
-        elif button_id == "copy_url" and article.url:
-            self.app.copy_to_clipboard(article.url)
-            self.notify("URL copied to clipboard.")
-            return
-        elif button_id == "remove":
+        if button_id == "remove":
             self.dismiss("remove")
             return
-        self.dismiss(None)
+        if button_id == "cancel":
+            self.dismiss(None)
+            return
+        if apply_article_action(self, self._article, self._access, button_id):
+            self.dismiss("fulltext")
+            return
+        if button_id in {"copy_citation", "copy_doi", "copy_url"}:
+            return  # keep the modal open so the user can copy more than one thing
+        self.dismiss(None)  # close after opening a link
 
 
 class FullTextScreen(EscDismissScreen[None]):
@@ -1226,8 +1238,8 @@ class FullTextScreen(EscDismissScreen[None]):
 
 class DoiLookupScreen(EscDismissScreen[None]):
     """§5 — look up a DOI directly (independent of §1-4's search results) and show
-    everything Crossref/PMC have on it, with the same open/copy/full-text actions as a
-    search result via a nested ArticleActionsScreen."""
+    everything Crossref/PMC have on it, with the same open/copy/full-text action buttons
+    a search result gets, shown inline rather than behind a second modal."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -1247,7 +1259,14 @@ class DoiLookupScreen(EscDismissScreen[None]):
                     id="doi_text",
                 )
             with Horizontal():
-                yield Button("Actions...", id="actions", disabled=True)
+                yield Button("Open DOI page", id="open_pubmed", disabled=True)
+                yield Button("Open free copy", id="open_free", disabled=True)
+                yield Button("Try Sci-Hub (DOI)", id="open_scihub", disabled=True)
+                yield Button("Read full text (PMC only)", id="read_fulltext", disabled=True)
+            with Horizontal():
+                yield Button("Copy citation", id="copy_citation", disabled=True)
+                yield Button("Copy DOI", id="copy_doi", disabled=True)
+                yield Button("Copy URL", id="copy_url", disabled=True)
                 yield Button("Close", id="close")
 
     def on_mount(self) -> None:
@@ -1258,12 +1277,17 @@ class DoiLookupScreen(EscDismissScreen[None]):
             self._do_lookup()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "lookup":
+        button_id = event.button.id
+        if button_id == "lookup":
             self._do_lookup()
-        elif event.button.id == "actions":
-            self.run_worker(self._show_actions(), exclusive=True)
-        else:
+            return
+        if button_id == "close":
             self.dismiss(None)
+            return
+        if self._record is None or self._access is None:
+            return
+        if apply_article_action(self, self._record, self._access, button_id):
+            self.run_worker(self._read_fulltext(), exclusive=True)
 
     def _do_lookup(self) -> None:
         doi = self.query_one("#doi_input", Input).value.strip()
@@ -1271,12 +1295,23 @@ class DoiLookupScreen(EscDismissScreen[None]):
             return
         self.run_worker(self._fetch(doi), exclusive=True)
 
+    def _set_action_buttons_enabled(self, enabled: bool) -> None:
+        for button_id in (
+            "open_pubmed",
+            "open_free",
+            "open_scihub",
+            "read_fulltext",
+            "copy_citation",
+            "copy_doi",
+            "copy_url",
+        ):
+            self.query_one(f"#{button_id}", Button).disabled = not enabled
+
     async def _fetch(self, doi: str) -> None:
         text = self.query_one("#doi_text", Static)
-        actions_button = self.query_one("#actions", Button)
-        actions_button.disabled = True
         self._record = None
         self._access = None
+        self._set_action_buttons_enabled(False)
         text.update(f"Looking up {doi} ...")
 
         data = await asyncio.to_thread(fetch_doi_info, doi)
@@ -1290,18 +1325,20 @@ class DoiLookupScreen(EscDismissScreen[None]):
         self._record = record
         self._access = access
         text.update(render_doi_detail(record, access))
-        actions_button.disabled = False
 
-    async def _show_actions(self) -> None:
-        if self._record is None or self._access is None:
+        self.query_one("#open_pubmed", Button).disabled = not record.url
+        self.query_one("#open_free", Button).disabled = not (access.is_free and access.url)
+        self.query_one("#open_scihub", Button).disabled = not record.doi
+        self.query_one("#read_fulltext", Button).disabled = not record.pmc
+        self.query_one("#copy_citation", Button).disabled = False
+        self.query_one("#copy_doi", Button).disabled = not record.doi
+        self.query_one("#copy_url", Button).disabled = not record.url
+
+    async def _read_fulltext(self) -> None:
+        if self._record is None or not self._record.pmc:
             return
-        result = await self.app.push_screen_wait(
-            ArticleActionsScreen(self._record.doi, self._record, self._access, "DOI")
-        )
-        if result == "fulltext" and self._record.pmc:
-            text = await asyncio.to_thread(fetch_pmc_fulltext, self._record.pmc)
-            self.app.push_screen(FullTextScreen(self._record.title or "(no title)", text))
-        # "remove" has nothing to remove here (no results table in this mode) — ignored.
+        text = await asyncio.to_thread(fetch_pmc_fulltext, self._record.pmc)
+        self.app.push_screen(FullTextScreen(self._record.title or "(no title)", text))
 
 
 class SettingsScreen(EscDismissScreen[Settings | None]):

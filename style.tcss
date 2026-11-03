@@ -437,7 +437,7 @@ CommandPalette #--input {
     padding: 0 1;
 }
 
-#doi_dialog > Horizontal:last-child {
+#doi_dialog > Horizontal {
     height: auto;
     margin-top: 1;
 }
