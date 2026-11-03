@@ -431,7 +431,7 @@ CommandPalette #--input {
 }
 
 #doi_scroll {
-    height: 14;
+    height: 18;
     margin-top: 1;
     background: $surface;
     border: round $primary 30%;

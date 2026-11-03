@@ -1262,11 +1262,10 @@ class DoiLookupScreen(EscDismissScreen[None]):
                 yield Button("Open DOI page", id="open_pubmed", disabled=True)
                 yield Button("Open free copy", id="open_free", disabled=True)
                 yield Button("Try Sci-Hub (DOI)", id="open_scihub", disabled=True)
-            with Horizontal():
                 yield Button("Read full text (PMC only)", id="read_fulltext", disabled=True)
+            with Horizontal():
                 yield Button("Copy citation", id="copy_citation", disabled=True)
                 yield Button("Copy DOI", id="copy_doi", disabled=True)
-            with Horizontal():
                 yield Button("Copy URL", id="copy_url", disabled=True)
                 yield Button("Close", id="close")
 
