@@ -19,7 +19,3 @@ scicher_settings.json
 
 # macOS
 .DS_Store
-
-# Local AI coding agent instructions (not published)
-AGENTS.md
-CLAUDE.md
