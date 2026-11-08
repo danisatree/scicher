@@ -10,8 +10,7 @@ wheels/
 .venv
 
 # Scicher runtime output (search exports, query log, watch snapshots)
-scicher_results_*.csv
-scicher_query_log.csv
+*.csv
 scicher_watch_snapshots.json
 
 # Scicher local settings (API keys — never commit)
