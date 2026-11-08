@@ -102,8 +102,7 @@ available in the current context; the key ones are:
 
 ## Status
 
-This is a personal tool under active development; see `BACKLOG.md` for planned and
-considered-but-not-built features.
+This is a personal tool under active development.
 
 ## License
 
