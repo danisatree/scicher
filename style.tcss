@@ -316,6 +316,14 @@ CommandPalette #--input {
     margin-top: 1;
 }
 
+#mesh_suggestions {
+    height: auto;
+    max-height: 8;
+    border: round $primary;
+    background: $surface;
+    margin-top: 1;
+}
+
 #filters_dialog {
     width: 120;
     max-height: 90%;

@@ -20,7 +20,6 @@ from textual.binding import Binding
 from textual.command import DiscoveryHit
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.suggester import SuggestFromList
 from textual.system_commands import SystemCommandsProvider
 from textual.widgets import (
     Button,
@@ -58,6 +57,27 @@ def load_mesh_terms() -> list[str]:
     if not MESH_TERMS_PATH.exists():
         return []
     return MESH_TERMS_PATH.read_text(encoding="utf-8").splitlines()
+
+
+MESH_SUGGESTION_LIMIT = 10
+
+
+def match_mesh_terms(terms: list[str], query: str, limit: int = MESH_SUGGESTION_LIMIT) -> list[str]:
+    """Rank MeSH terms for `query`: prefix matches first, then matches anywhere in the
+    term (so a later word like "Disease" in "von Willebrand Disease" still surfaces),
+    both case-insensitive, each group alphabetical, capped to `limit` results."""
+    if not query:
+        return []
+    query_fold = query.casefold()
+    prefix_matches = []
+    other_matches = []
+    for term in terms:
+        term_fold = term.casefold()
+        if term_fold.startswith(query_fold):
+            prefix_matches.append(term)
+        elif query_fold in term_fold:
+            other_matches.append(term)
+    return (prefix_matches + other_matches)[:limit]
 
 
 @dataclass
@@ -600,25 +620,65 @@ class AddTermScreen(EscDismissScreen[Term | None]):
                 placeholder="term value, e.g. meteorosensitivity",
                 id="value_input",
             )
+            yield ListView(id="mesh_suggestions")
             with Horizontal():
                 yield Button("Save" if self._term else "Add", variant="primary", id="add")
                 yield Button("Cancel", id="cancel")
 
     def on_mount(self) -> None:
-        self._update_suggester(self._term.field if self._term else "title/abstract")
+        self._mesh_active = (self._term.field if self._term else "title/abstract") == "MeSH"
+        self._suppress_next_change = False
+        self.query_one("#mesh_suggestions", ListView).display = False
         self.query_one("#value_input", Input).focus()
 
-    def _update_suggester(self, field_: str) -> None:
-        value_input = self.query_one("#value_input", Input)
-        if field_ == "MeSH":
-            terms = load_mesh_terms()
-            value_input.suggester = SuggestFromList(terms, case_sensitive=False) if terms else None
-        else:
-            value_input.suggester = None
+    def _suggestions_list(self) -> ListView:
+        return self.query_one("#mesh_suggestions", ListView)
+
+    def _update_suggestions(self, query: str) -> None:
+        suggestions = self._suggestions_list()
+        if not self._mesh_active:
+            suggestions.display = False
+            return
+        matches = match_mesh_terms(load_mesh_terms(), query)
+        suggestions.clear()
+        if not matches:
+            suggestions.display = False
+            return
+        for term in matches:
+            suggestions.append(ListItem(Label(term), name=term))
+        suggestions.display = True
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "field_select":
-            self._update_suggester(str(event.value))
+            self._mesh_active = event.value == "MeSH"
+            self._update_suggestions(self.query_one("#value_input", Input).value)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "value_input":
+            return
+        if self._suppress_next_change:
+            self._suppress_next_change = False
+            return
+        self._update_suggestions(event.value)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id != "mesh_suggestions" or event.item.name is None:
+            return
+        value_input = self.query_one("#value_input", Input)
+        self._suppress_next_change = True
+        value_input.value = event.item.name
+        value_input.cursor_position = len(value_input.value)
+        self._suggestions_list().display = False
+        value_input.focus()
+
+    def action_focus_next(self) -> None:
+        suggestions = self._suggestions_list()
+        if self.focused is self.query_one("#value_input", Input) and suggestions.display:
+            suggestions.focus()
+            if suggestions.index is None:
+                suggestions.index = 0
+            return
+        self.focus_next()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "add":
