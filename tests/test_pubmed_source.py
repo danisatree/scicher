@@ -1,7 +1,40 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from pubmed_source import CSV_FIELDS, article_to_row, format_citation, pubmed_language
+from pubmed_source import (
+    CSV_FIELDS,
+    article_to_row,
+    fetch_pubmed_articles_batch,
+    format_citation,
+    pubmed_language,
+)
+
+
+def minimal_pubmed_article_xml(pmid: str, title: str) -> str:
+    """A single <PubmedArticle> element with just enough structure for
+    metapub.PubMedArticle to parse without error."""
+    return (
+        "<PubmedArticle>"
+        '<MedlineCitation Status="MEDLINE" Owner="NLM">'
+        f"<PMID Version=\"1\">{pmid}</PMID>"
+        '<Article PubModel="Print">'
+        '<Journal><ISSN IssnType="Print">0000-0000</ISSN>'
+        '<JournalIssue CitedMedium="Print"><Volume>1</Volume><Issue>1</Issue>'
+        "<PubDate><Year>2020</Year></PubDate></JournalIssue>"
+        "<Title>Test Journal</Title></Journal>"
+        f"<ArticleTitle>{title}</ArticleTitle>"
+        "<AuthorList><Author><LastName>Smith</LastName><ForeName>J</ForeName>"
+        "<Initials>J</Initials></Author></AuthorList>"
+        "</Article></MedlineCitation>"
+        "<PubmedData><ArticleIdList>"
+        f'<ArticleId IdType="pubmed">{pmid}</ArticleId>'
+        "</ArticleIdList></PubmedData>"
+        "</PubmedArticle>"
+    )
+
+
+def pubmed_article_set_xml(*articles: str) -> str:
+    return f"<PubmedArticleSet>{''.join(articles)}</PubmedArticleSet>"
 
 
 def make_article(**overrides):
@@ -107,3 +140,60 @@ def test_format_citation_omits_missing_optional_parts():
     citation = format_citation(article)
     assert "doi:" not in citation
     assert citation.endswith("A Study of Things.")
+
+
+def test_fetch_pubmed_articles_batch_parses_all_articles_in_one_chunk():
+    fetcher = Mock()
+    fetcher.qs.efetch.return_value = pubmed_article_set_xml(
+        minimal_pubmed_article_xml("111", "First Article"),
+        minimal_pubmed_article_xml("222", "Second Article"),
+    )
+
+    articles = fetch_pubmed_articles_batch(fetcher, ["111", "222"])
+
+    assert set(articles) == {"111", "222"}
+    assert articles["111"].title == "First Article"
+    assert articles["222"].title == "Second Article"
+    fetcher.qs.efetch.assert_called_once_with({"db": "pubmed", "id": ["111", "222"]})
+
+
+def test_fetch_pubmed_articles_batch_splits_into_chunks():
+    fetcher = Mock()
+    fetcher.qs.efetch.side_effect = [
+        pubmed_article_set_xml(minimal_pubmed_article_xml("111", "First")),
+        pubmed_article_set_xml(minimal_pubmed_article_xml("222", "Second")),
+    ]
+
+    articles = fetch_pubmed_articles_batch(fetcher, ["111", "222"], chunk_size=1)
+
+    assert fetcher.qs.efetch.call_count == 2
+    assert set(articles) == {"111", "222"}
+
+
+def test_fetch_pubmed_articles_batch_leaves_missing_pmids_for_caller_to_retry():
+    fetcher = Mock()
+    fetcher.qs.efetch.return_value = pubmed_article_set_xml(
+        minimal_pubmed_article_xml("111", "First Article")
+    )
+
+    articles = fetch_pubmed_articles_batch(fetcher, ["111", "999"])
+
+    assert set(articles) == {"111"}
+
+
+def test_fetch_pubmed_articles_batch_skips_chunk_on_request_failure():
+    fetcher = Mock()
+    fetcher.qs.efetch.side_effect = ConnectionError("boom")
+
+    articles = fetch_pubmed_articles_batch(fetcher, ["111", "222"])
+
+    assert articles == {}
+
+
+def test_fetch_pubmed_articles_batch_skips_malformed_xml():
+    fetcher = Mock()
+    fetcher.qs.efetch.return_value = "<not valid xml"
+
+    articles = fetch_pubmed_articles_batch(fetcher, ["111"])
+
+    assert articles == {}
