@@ -6,7 +6,7 @@ from textual.widgets import Checkbox, Input, ListView, Select, SelectionList
 
 from openaccess import OpenAccessInfo
 from querymodel import Filters
-from screens import AddTermScreen, FiltersScreen, apply_article_action
+from screens import AddTermScreen, FiltersScreen, apply_article_action, apply_trial_action
 
 
 class _HostApp(App):
@@ -38,6 +38,20 @@ def make_screen():
     screen.app.copy_to_clipboard = Mock()
     screen.notify = Mock()
     return screen
+
+
+def make_trial(**overrides):
+    defaults = dict(
+        nct_id="NCT01286116",
+        title="A Study of Things",
+        status="COMPLETED",
+        phase="PHASE3",
+        sponsor="Example Sponsor",
+    )
+    defaults.update(overrides)
+    trial = SimpleNamespace(**defaults)
+    trial.url = f"https://clinicaltrials.gov/study/{trial.nct_id}"
+    return trial
 
 
 def test_open_pubmed_opens_article_url():
@@ -107,6 +121,39 @@ def test_copy_url_copies_article_url():
     screen = make_screen()
     apply_article_action(screen, make_article(), OpenAccessInfo(False, "Unknown"), "copy_url")
     screen.app.copy_to_clipboard.assert_called_once_with("https://pubmed.ncbi.nlm.nih.gov/12345")
+
+
+def test_trial_open_page_opens_ctgov_url():
+    with patch("screens.webbrowser.open") as mock_open:
+        apply_trial_action(make_screen(), make_trial(), "open_page")
+    mock_open.assert_called_once_with("https://clinicaltrials.gov/study/NCT01286116")
+
+
+def test_trial_search_sponsor_opens_google_search_with_sponsor_name():
+    with patch("screens.webbrowser.open") as mock_open:
+        apply_trial_action(make_screen(), make_trial(sponsor="Example Sponsor"), "search_sponsor")
+    mock_open.assert_called_once_with("https://www.google.com/search?q=Example+Sponsor")
+
+
+def test_trial_search_sponsor_does_nothing_without_sponsor():
+    with patch("screens.webbrowser.open") as mock_open:
+        apply_trial_action(make_screen(), make_trial(sponsor=""), "search_sponsor")
+    mock_open.assert_not_called()
+
+
+def test_trial_copy_summary_copies_to_clipboard_and_notifies():
+    screen = make_screen()
+    apply_trial_action(screen, make_trial(), "copy_summary")
+    screen.app.copy_to_clipboard.assert_called_once_with(
+        "NCT01286116 — A Study of Things (COMPLETED, PHASE3)"
+    )
+    screen.notify.assert_called_once()
+
+
+def test_trial_copy_url_copies_trial_url():
+    screen = make_screen()
+    apply_trial_action(screen, make_trial(), "copy_url")
+    screen.app.copy_to_clipboard.assert_called_once_with("https://clinicaltrials.gov/study/NCT01286116")
 
 
 async def test_add_term_screen_shows_mesh_suggestions_only_for_mesh_field():
