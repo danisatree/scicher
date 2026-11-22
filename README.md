@@ -5,6 +5,8 @@ alongside arXiv), and browsing the results — without leaving the keyboard.
 
 Built with [Textual](https://github.com/Textualize/textual).
 
+![Scicher search console](docs/screenshot.png)
+
 ## Why
 
 PubMed's advanced search builder works, but it's a web form: slow to iterate on, easy
@@ -97,8 +99,19 @@ available in the current context; the key ones are:
 
 ## Project layout
 
-- `main.py` — the app: query model, PubMed/arXiv/Crossref fetchers, and all Textual
-  screens/widgets.
+- `main.py` — the Textual `App`: wiring, search orchestration, and key bindings.
+- `screens.py` — modal screens (DOI lookup, trial lookup, filters, settings, etc.)
+  and small supporting widgets.
+- `querymodel.py` — the PubMed advanced-search query model: terms, groups, filters,
+  and round-trip (de)serialization.
+- `pubmed_source.py` — PubMed fetching helpers and the CSV row shape shared by both
+  search sources.
+- `arxiv_source.py` — arXiv as a second, optional search source alongside PubMed.
+- `doi_lookup.py` — DOI lookup via Crossref/PMC, independent of search results.
+- `ctgov_lookup.py` — clinical trial lookup by NCT ID via ClinicalTrials.gov,
+  independent of search results.
+- `openaccess.py` — open-access/PMC resolution and full-text fetching.
+- `persistence.py` — settings, saved queries, and query log storage.
 - `theme.py` — the Tokyo Night theme definitions.
 - `style.tcss` — Textual CSS for the app's layout and widgets.
 - `data/mesh_terms.txt` — a static list of MeSH descriptor names used for
