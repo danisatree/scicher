@@ -243,7 +243,7 @@ DataTable > .datatable--cursor {
 /* Modal dialogs (AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen) */
 
 AddTermScreen, ExportCsvScreen, QueryLogScreen, FiltersScreen, LoadQueryScreen, ArticleActionsScreen,
-SettingsScreen, FullTextScreen, DoiLookupScreen {
+SettingsScreen, FullTextScreen, DoiLookupScreen, TrialLookupScreen {
     align: center middle;
 }
 
@@ -254,7 +254,7 @@ SettingsScreen, FullTextScreen, DoiLookupScreen {
    box it needs — the palette's own container has dock/overlay children that don't
    size correctly for a border, so we skip it and border the list directly. */
 #dialog, #export_dialog, #log_dialog, #actions_dialog, #settings_dialog, #filters_dialog, #load_dialog,
-#fulltext_dialog, #doi_dialog, CommandList {
+#fulltext_dialog, #doi_dialog, #trial_dialog, CommandList {
     height: auto;
     max-height: 60vh;
     padding: 1 2;
@@ -447,6 +447,35 @@ CommandPalette #--input {
 }
 
 #doi_dialog > Horizontal {
+    height: auto;
+    margin-top: 1;
+}
+
+#trial_dialog {
+    width: 140;
+    max-width: 95%;
+    max-height: 90%;
+}
+
+#trial_input_row {
+    height: auto;
+    margin-top: 1;
+}
+
+#trial_input_row Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#trial_scroll {
+    height: 18;
+    margin-top: 1;
+    background: $surface;
+    border: round $primary 30%;
+    padding: 0 1;
+}
+
+#trial_dialog > Horizontal {
     height: auto;
     margin-top: 1;
 }
