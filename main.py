@@ -49,6 +49,7 @@ from screens import (
     QueryLogScreen,
     ResultsTable,
     SettingsScreen,
+    TrialLookupScreen,
 )
 from theme import SCIENCE_DARK_THEME, SCIENCE_LIGHT_THEME
 
@@ -66,6 +67,7 @@ class ScicherApp(App):
         ("3", "focus_results", "Results"),
         ("4", "focus_detail", "Detail"),
         ("5", "doi_lookup", "DOI Lookup"),
+        ("6", "trial_lookup", "Trial Lookup"),
         ("y", "sort_by_year", "Sort by year"),
         ("a", "add_term", "Add term"),
         ("n", "new_group", "New group (AND)"),
@@ -218,6 +220,9 @@ class ScicherApp(App):
 
     def action_doi_lookup(self) -> None:
         self.push_screen(DoiLookupScreen())
+
+    def action_trial_lookup(self) -> None:
+        self.push_screen(TrialLookupScreen())
 
     NUMERIC_SORT_COLUMNS: ClassVar = {"pmid", "year"}
 

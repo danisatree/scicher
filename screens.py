@@ -3,6 +3,7 @@
 import asyncio
 import webbrowser
 from typing import Any, ClassVar, TypeVar
+from urllib.parse import quote_plus
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -24,6 +25,7 @@ from textual.widgets import (
 )
 
 import openaccess
+from ctgov_lookup import TrialRecord, build_trial_record, fetch_trial_info, render_trial_detail
 from doi_lookup import DoiRecord, build_doi_record, fetch_doi_info, fetch_pmcid_for_doi, render_doi_detail
 from openaccess import OpenAccessInfo
 from persistence import Settings, read_query_log
@@ -396,6 +398,21 @@ def apply_article_action(screen: Screen, article: Any, access: OpenAccessInfo, a
     return False
 
 
+def apply_trial_action(screen: Screen, record: TrialRecord, action: str) -> None:
+    """Trimmed sibling of apply_article_action for TrialLookupScreen: a trial has no
+    DOI/PMC/open-access concept, so only open-page/search-sponsor/copy-summary/copy-url apply."""
+    if action == "open_page":
+        webbrowser.open(record.url)
+    elif action == "search_sponsor" and record.sponsor:
+        webbrowser.open(f"https://www.google.com/search?q={quote_plus(record.sponsor)}")
+    elif action == "copy_summary":
+        screen.app.copy_to_clipboard(f"{record.nct_id} — {record.title} ({record.status}, {record.phase})")
+        screen.notify("Summary copied to clipboard.")
+    elif action == "copy_url":
+        screen.app.copy_to_clipboard(record.url)
+        screen.notify("URL copied to clipboard.")
+
+
 class ArticleActionsScreen(EscDismissScreen[str | None]):
     """Modal offering actions for the selected article: open links, copy details, read the full
     text, or remove it from the results table. Dismisses with "remove" or "fulltext" to tell the
@@ -589,6 +606,82 @@ class DoiLookupScreen(EscDismissScreen[None]):
             return
         text = await asyncio.to_thread(openaccess.fetch_pmc_fulltext, self._record.pmc)
         self.app.push_screen(FullTextScreen(self._record.title or "(no title)", text))
+
+
+class TrialLookupScreen(EscDismissScreen[None]):
+    """§6 — look up a clinical trial directly by NCT ID (independent of §1-4's search
+    results) and show everything ClinicalTrials.gov has on it. Mirrors DoiLookupScreen's
+    shape, but with a trimmed action set (open page / copy summary / copy URL) since a
+    trial has no DOI, PMC, or open-access concept."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._record: TrialRecord | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="trial_dialog"):
+            yield Label("Trial Lookup", markup=False)
+            with Horizontal(id="trial_input_row"):
+                yield Input(placeholder="NCT01286116", id="trial_input")
+                yield Button("Look up", variant="primary", id="lookup")
+            with VerticalScroll(id="trial_scroll"):
+                yield Static(
+                    "Enter an NCT ID above and press Look up (or Enter).",
+                    markup=False,
+                    id="trial_text",
+                )
+            with Horizontal():
+                yield Button("Open CT.gov page", id="open_page", disabled=True)
+                yield Button("Search sponsor on Google", id="search_sponsor", disabled=True)
+                yield Button("Copy summary", id="copy_summary", disabled=True)
+                yield Button("Copy URL", id="copy_url", disabled=True)
+                yield Button("Close", id="close")
+
+    def on_mount(self) -> None:
+        self.query_one("#trial_input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "trial_input":
+            self._do_lookup()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id
+        if button_id == "lookup":
+            self._do_lookup()
+            return
+        if button_id == "close":
+            self.dismiss(None)
+            return
+        if self._record is None:
+            return
+        apply_trial_action(self, self._record, button_id)
+
+    def _do_lookup(self) -> None:
+        nct_id = self.query_one("#trial_input", Input).value.strip()
+        if not nct_id:
+            return
+        self.run_worker(self._fetch(nct_id), exclusive=True)
+
+    def _set_action_buttons_enabled(self, enabled: bool) -> None:
+        for button_id in ("open_page", "search_sponsor", "copy_summary", "copy_url"):
+            self.query_one(f"#{button_id}", Button).disabled = not enabled
+
+    async def _fetch(self, nct_id: str) -> None:
+        text = self.query_one("#trial_text", Static)
+        self._record = None
+        self._set_action_buttons_enabled(False)
+        text.update(f"Looking up {nct_id} ...")
+
+        data = await asyncio.to_thread(fetch_trial_info, nct_id)
+        if data is None:
+            text.update(f"No ClinicalTrials.gov record found for NCT ID: {nct_id}")
+            return
+
+        record = build_trial_record(data)
+        self._record = record
+        text.update(render_trial_detail(record))
+        self._set_action_buttons_enabled(True)
+        self.query_one("#search_sponsor", Button).disabled = not record.sponsor
 
 
 class SettingsScreen(EscDismissScreen[Settings | None]):

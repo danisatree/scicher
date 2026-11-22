@@ -30,6 +30,9 @@ keyboard.
   highlighted row.
 - **DOI lookup** — look up any DOI directly (independent of a search), pulling
   Crossref metadata and resolving open-access/PMC full text.
+- **Trial lookup** — look up a clinical trial directly by NCT ID (independent of a
+  search), pulling status, phase, sponsor, conditions, enrollment, and eligibility
+  criteria from ClinicalTrials.gov.
 - **Per-article actions** — open the article/DOI page, open a free copy if one is
   available, open a Sci-Hub link, read PMC full text inline, or copy the citation,
   DOI, or URL.
@@ -74,6 +77,7 @@ available in the current context; the key ones are:
 | --- | --- |
 | `1` / `2` / `3` / `4` | Focus Terms / Query / Results / Detail |
 | `5` | DOI Lookup |
+| `6` | Trial Lookup |
 | `a` | Add term |
 | `n` | New group (AND) |
 | `m` | Edit selected term |
